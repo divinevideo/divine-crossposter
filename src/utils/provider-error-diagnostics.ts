@@ -16,9 +16,13 @@ const MAX_TYPE_LENGTH = 100
 const MAX_TRACE_ID_LENGTH = 64
 const REDACTED = '[redacted]'
 
-// Long unbroken runs of token alphabet characters. A run with a digit is
-// treated as a credential at 20+ characters; any run at 40+ characters is.
+// Token-alphabet runs. A 20+ run is a credential unless it is an
+// underscore-separated lowercase word under 40 characters (scope names).
+// A labeled code or token of 8+ characters is a credential when it has a
+// digit, an uppercase letter, or is itself 20+ characters.
 const TOKEN_RUN = /[A-Za-z0-9_\-.~+/=#%|:]{20,}/g
+const LABELED_SECRET =
+  /\b(?:authorization code|auth code|access token|refresh token|client secret|code verifier|code|token)\b[^A-Za-z0-9]{0,3}([A-Za-z0-9_\-.~+/=#%|:]{8,})/gi
 const URL_PATTERN = /\bhttps?:\/\/\S+/gi
 // Query-string style assignments such as `code=...` echoed back from a request.
 const SECRET_ASSIGNMENT =
@@ -29,12 +33,24 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 }
 
+function isScopeName(run: string): boolean {
+  return /^[a-z]+(?:_[a-z]+)+$/.test(run)
+}
+
+function isCredentialRun(run: string): boolean {
+  if (isScopeName(run) && run.length < 40) return false
+  return /\d/.test(run) || /[A-Z]/.test(run) || run.length >= 20
+}
+
 export function redactProviderText(value: string, maxLength: number): string {
   const scrubbed = value
     .replace(CONTROL_CHARS, ' ')
     .replace(URL_PATTERN, '[url]')
     .replace(SECRET_ASSIGNMENT, (_match, key: string) => `${key}=${REDACTED}`)
-    .replace(TOKEN_RUN, (run) => (/\d/.test(run) || run.length >= 40 ? REDACTED : run))
+    .replace(LABELED_SECRET, (match, secret: string) =>
+      isCredentialRun(secret) ? `${match.slice(0, match.length - secret.length)}${REDACTED}` : match,
+    )
+    .replace(TOKEN_RUN, (run) => (isCredentialRun(run) ? REDACTED : run))
     .trim()
   return scrubbed.length > maxLength ? `${scrubbed.slice(0, maxLength)}…` : scrubbed
 }

@@ -74,6 +74,33 @@ describe('providerErrorDiagnostics', () => {
     })
   })
 
+  it('redacts a credential-like path segment and still drops the query', async () => {
+    const error = await normalizeProviderError(
+      'instagram',
+      withUrl(
+        Response.json({ error: { message: 'bad', code: 100 } }, { status: 400 }),
+        'https://graph.instagram.com/oauth/ABCDEFGHIJKLMNOPQRST?code=shh',
+      ),
+    )
+
+    const diagnostics = providerErrorDiagnostics(error)
+    expect(diagnostics?.endpoint).toBe('https://graph.instagram.com/oauth/[redacted]')
+    expect(JSON.stringify(diagnostics)).not.toContain('ABCDEFGHIJKLMNOPQRST')
+    expect(JSON.stringify(diagnostics)).not.toContain('shh')
+  })
+
+  it('keeps the X token path, including its version segment', async () => {
+    const error = await normalizeProviderError(
+      'x',
+      withUrl(
+        Response.json({ error: 'invalid_request', error_description: 'nope' }, { status: 400 }),
+        'https://api.x.com/2/oauth2/token',
+      ),
+    )
+
+    expect(providerErrorDiagnostics(error)?.endpoint).toBe('https://api.x.com/2/oauth2/token')
+  })
+
   it('keeps only origin and path of the failing endpoint', async () => {
     const error = await normalizeProviderError(
       'instagram',
@@ -155,6 +182,19 @@ describe('providerErrorDiagnostics', () => {
 })
 
 describe('redactProviderText', () => {
+  it('redacts a letter-only authorization code echoed in a message', () => {
+    expect(redactProviderText('Authorization code ABCDEFGHIJKLMNOPQRST rejected', 300)).toBe(
+      'Authorization code [redacted] rejected',
+    )
+    expect(redactProviderText('rejected ABCDEFGHIJKLMNOPQRST now', 300)).toBe('rejected [redacted] now')
+  })
+
+  it('redacts a short labeled authorization code', () => {
+    expect(redactProviderText('Authorization code ABCDEFGH rejected', 300)).toBe(
+      'Authorization code [redacted] rejected',
+    )
+  })
+
   it('redacts token-like runs echoed in a message', () => {
     const redacted = redactProviderText(`Invalid OAuth access token - ${ACCESS_TOKEN} for code ${AUTH_CODE}`, 300)
 

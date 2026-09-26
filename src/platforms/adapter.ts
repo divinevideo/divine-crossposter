@@ -54,18 +54,31 @@ export class PlatformAdapterError extends Error {
     message: string,
     public readonly providerStatus?: number,
     public readonly providerResponse?: unknown,
-    // Origin and path of the failing request only; the query can carry secrets.
+    // Origin and scrubbed path of the failing request; the query can carry secrets.
     public readonly providerEndpoint?: string,
   ) {
     super(message)
   }
 }
 
+function isSafePathSegment(segment: string): boolean {
+  return (
+    segment === '' ||
+    /^\d{1,2}$/.test(segment) ||
+    /^[a-z][a-z_-]{0,31}$/.test(segment) ||
+    /^[a-z]{1,12}\d{1,2}$/.test(segment)
+  )
+}
+
 export function providerEndpoint(response: Response): string | undefined {
   if (!response.url) return undefined
   try {
     const url = new URL(response.url)
-    return `${url.origin}${url.pathname}`
+    const pathname = url.pathname
+      .split('/')
+      .map((segment) => (isSafePathSegment(segment) ? segment : '[redacted]'))
+      .join('/')
+    return `${url.origin}${pathname}`
   } catch {
     return undefined
   }
