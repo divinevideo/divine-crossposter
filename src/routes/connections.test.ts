@@ -380,14 +380,18 @@ describe('connection routes', () => {
     const attemptId = 'oauth_attempt_token_401'
     const stateId = 'private-state-token-401'
     const echoedToken = 'Zm9vYmFyMTIzNDU2Nzg5MGFiY2RlZg'
-    await createTrackedState(db, { attemptId, stateId })
+    // Shaped like the real values: an X authorization code and a 43-character PKCE verifier.
+    const authCode = 'ZEd4a1VYaE9TbUpmVGpSR1ZYazNjMnhMY25CVzoxNzU5ODc2NTQzMjEwOjE6MTphYzox'
+    const codeVerifier = 'pD3rVx8Kq2Ls9Wn4Ty7Bz1Hc6Mf0Gj5Ra8Ue3Yi2Oo9'
+    await createTrackedState(db, { attemptId, stateId, codeVerifier })
     const logSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     fetchMock.mockImplementationOnce(
       respondAtRequestedUrl(
         Response.json(
           {
             error: 'invalid_grant',
-            error_description: `Value passed for the token ${echoedToken} was invalid.`,
+            error_description:
+              `Value passed for the token ${echoedToken} was invalid (code ${authCode}, code_verifier ${codeVerifier}).`,
             access_token: 'private-access-token',
           },
           { status: 401 },
@@ -396,7 +400,7 @@ describe('connection routes', () => {
     )
 
     const response = await app.request(
-      `/connections/x/callback?code=private-auth-code&state=${stateId}`,
+      `/connections/x/callback?code=${authCode}&state=${stateId}`,
       {},
       testEnv(db),
     )
@@ -409,14 +413,14 @@ describe('connection routes', () => {
     })
     const logged = JSON.stringify(logSpy.mock.calls)
     expect(logged).not.toContain(echoedToken)
-    for (const forbidden of ['private-access-token', 'private-auth-code', stateId, 'x-secret', 'private-code-verifier']) {
+    for (const forbidden of ['private-access-token', authCode, stateId, 'x-secret', codeVerifier]) {
       expect(logged).not.toContain(forbidden)
     }
     const transition = JSON.parse(logSpy.mock.calls[0][0] as string) as Record<string, unknown>
     expect(transition.providerError).toEqual({
       endpoint: 'https://api.x.com/2/oauth2/token',
       type: 'invalid_grant',
-      message: 'Value passed for the token [redacted] was invalid.',
+      message: 'Value passed for the token [redacted] was invalid (code [redacted], code_verifier [redacted]).',
     })
   })
 
@@ -463,6 +467,57 @@ describe('connection routes', () => {
         code: 400,
         message: 'Invalid platform app',
       },
+    })
+  })
+
+  it('logs a failed Instagram long-lived token exchange without the secrets in its query', async () => {
+    const attemptId = 'oauth_attempt_instagram_long_lived'
+    const stateId = 'private-state-instagram-long-lived'
+    const shortLivedToken = 'IGAAVxY3Zk9QaBZAFp0dTRmR2ZAYVU5WVE3OUVPb2pXVkx1'
+    const clientSecret = '4f1d9c0b7e2a5f3c8d6e1b0a9c7f2e4d'
+    await createTrackedState(db, { attemptId, stateId, platform: 'instagram' })
+    const logSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    fetchMock
+      .mockImplementationOnce(respondAtRequestedUrl(Response.json({ access_token: shortLivedToken })))
+      .mockImplementationOnce(
+        respondAtRequestedUrl(
+          Response.json(
+            {
+              error: {
+                message: 'Invalid OAuth access token - Cannot parse access token',
+                type: 'OAuthException',
+                code: 190,
+                fbtrace_id: 'AmX3kQ9sLb2vT7nR4pW1yZ8',
+              },
+            },
+            { status: 400 },
+          ),
+        ),
+      )
+
+    await app.request(
+      `/connections/instagram/callback?code=private-instagram-code&state=${stateId}`,
+      {},
+      testEnv(db, {
+        ENABLE_INSTAGRAM: 'true',
+        INSTAGRAM_CLIENT_ID: 'instagram-client',
+        INSTAGRAM_CLIENT_SECRET: clientSecret,
+      }),
+    )
+
+    // The long-lived exchange sends client_secret and access_token in its query string.
+    const logged = JSON.stringify(logSpy.mock.calls)
+    for (const forbidden of [shortLivedToken, clientSecret, 'private-instagram-code', stateId]) {
+      expect(logged).not.toContain(forbidden)
+    }
+    const transition = JSON.parse(logSpy.mock.calls[0][0] as string) as Record<string, unknown>
+    expect(transition).toMatchObject({ status: 'token_exchange_failed', providerStatus: 400 })
+    expect(transition.providerError).toEqual({
+      endpoint: 'https://graph.instagram.com/access_token',
+      type: 'OAuthException',
+      code: 190,
+      message: 'Invalid OAuth access token - Cannot parse access token',
+      traceId: 'AmX3kQ9sLb2vT7nR4pW1yZ8',
     })
   })
 

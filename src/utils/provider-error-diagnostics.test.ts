@@ -140,6 +140,18 @@ describe('providerErrorDiagnostics', () => {
 
     expect(providerErrorDiagnostics(error)).toEqual({ code: 1 })
   })
+
+  it('caps the type at 100 characters and the message at 300', () => {
+    const error = new PlatformAdapterError('instagram', 'unknown_platform_error', 'failed', 400, {
+      error_type: 'word '.repeat(30),
+      error_message: 'word '.repeat(100),
+    })
+
+    expect(providerErrorDiagnostics(error)).toEqual({
+      type: `${'word '.repeat(20)}…`,
+      message: `${'word '.repeat(60)}…`,
+    })
+  })
 })
 
 describe('redactProviderText', () => {
@@ -164,11 +176,15 @@ describe('redactProviderText', () => {
     )
   })
 
-  it('caps message length and strips control characters', () => {
-    const redacted = redactProviderText(`line one\nline two ${'word '.repeat(100)}`, 300)
+  it('redacts a 20-character run with a digit and a 40-character run without one', () => {
+    expect(
+      redactProviderText('code a1b2c3d4e5f6g7h8i9j0 and verifier abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN end', 300),
+    ).toBe('code [redacted] and verifier [redacted] end')
+  })
 
-    expect(redacted).not.toContain('\n')
-    expect(redacted.length).toBeLessThanOrEqual(301)
-    expect(redacted.endsWith('…')).toBe(true)
+  it('caps message length and strips control characters', () => {
+    expect(redactProviderText(`line one\nline two ${'word '.repeat(100)}`, 300)).toBe(
+      `line one line two ${'word '.repeat(56)}wo…`,
+    )
   })
 })
