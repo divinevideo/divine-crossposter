@@ -31,6 +31,14 @@ function authResponse(): Response {
   return Response.json({ result: PUBKEY_A })
 }
 
+// A real fetch response carries the URL that was requested; a bare Response.json() has url ''.
+function respondAtRequestedUrl(response: Response): (input: RequestInfo | URL) => Promise<Response> {
+  return async (input) => {
+    Object.defineProperty(response, 'url', { value: input instanceof Request ? input.url : String(input) })
+    return response
+  }
+}
+
 async function createTrackedState(
   db: D1Database,
   input: {
@@ -374,14 +382,16 @@ describe('connection routes', () => {
     const echoedToken = 'Zm9vYmFyMTIzNDU2Nzg5MGFiY2RlZg'
     await createTrackedState(db, { attemptId, stateId })
     const logSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
-    fetchMock.mockResolvedValueOnce(
-      Response.json(
-        {
-          error: 'invalid_grant',
-          error_description: `Value passed for the token ${echoedToken} was invalid.`,
-          access_token: 'private-access-token',
-        },
-        { status: 401 },
+    fetchMock.mockImplementationOnce(
+      respondAtRequestedUrl(
+        Response.json(
+          {
+            error: 'invalid_grant',
+            error_description: `Value passed for the token ${echoedToken} was invalid.`,
+            access_token: 'private-access-token',
+          },
+          { status: 401 },
+        ),
       ),
     )
 
@@ -404,6 +414,7 @@ describe('connection routes', () => {
     }
     const transition = JSON.parse(logSpy.mock.calls[0][0] as string) as Record<string, unknown>
     expect(transition.providerError).toEqual({
+      endpoint: 'https://api.x.com/2/oauth2/token',
       type: 'invalid_grant',
       message: 'Value passed for the token [redacted] was invalid.',
     })
@@ -414,12 +425,11 @@ describe('connection routes', () => {
     const stateId = 'private-state-instagram-400'
     await createTrackedState(db, { attemptId, stateId, platform: 'instagram' })
     const logSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
-    const providerResponse = Response.json(
-      { error_type: 'OAuthException', code: 400, error_message: 'Invalid platform app' },
-      { status: 400 },
+    fetchMock.mockImplementationOnce(
+      respondAtRequestedUrl(
+        Response.json({ error_type: 'OAuthException', code: 400, error_message: 'Invalid platform app' }, { status: 400 }),
+      ),
     )
-    Object.defineProperty(providerResponse, 'url', { value: 'https://api.instagram.com/oauth/access_token' })
-    fetchMock.mockResolvedValueOnce(providerResponse)
 
     const response = await app.request(
       `/connections/instagram/callback?code=private-instagram-code&state=${stateId}`,

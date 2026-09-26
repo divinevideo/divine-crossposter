@@ -116,13 +116,16 @@ describe('providerErrorDiagnostics', () => {
     expect(Object.keys(JSON.parse(logged) as object).sort()).toEqual(['code', 'message', 'type'])
   })
 
-  it('does not log a non-JSON provider body', async () => {
+  it('logs only the endpoint for a non-JSON provider body', async () => {
     const error = await normalizeProviderError(
       'instagram',
-      new Response(`<html>private-html-body ${AUTH_CODE}</html>`, { status: 400 }),
+      withUrl(
+        new Response(`<html>private-html-body ${AUTH_CODE}</html>`, { status: 400 }),
+        'https://api.instagram.com/oauth/access_token',
+      ),
     )
 
-    expect(providerErrorDiagnostics(error)).toBeNull()
+    expect(providerErrorDiagnostics(error)).toEqual({ endpoint: 'https://api.instagram.com/oauth/access_token' })
   })
 
   it('returns null for errors that are not provider errors', () => {
