@@ -1,4 +1,4 @@
-import { PlatformAdapterError } from '../platforms/adapter'
+import { asRecord, PlatformAdapterError } from '../platforms/adapter'
 
 // Provider error bodies are untrusted and can echo request values, so logs get
 // only these allowlisted fields, each capped and scrubbed of token-like runs.
@@ -13,7 +13,6 @@ export type ProviderErrorDiagnostics = {
 
 const MAX_MESSAGE_LENGTH = 300
 const MAX_TYPE_LENGTH = 100
-const MAX_TRACE_ID_LENGTH = 64
 // Provider strings are scanned only this far. The regex passes can exhaust the engine
 // on a multi-megabyte field, which would lose the whole log line.
 const MAX_SCAN_LENGTH = 4096
@@ -33,10 +32,6 @@ const SECRET_ASSIGNMENT =
   /(access_token|refresh_token|client_secret|code_verifier|code|state|token|secret|verifier|password|authorization|key|proof)=\S+/gi
 // C0 and C1 controls, Unicode line and paragraph separators, and bidi controls.
 const CONTROL_CHARS = /[\p{Cc}\p{Zl}\p{Zp}\p{Bidi_Control}]+/gu
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
-}
 
 function isScopeName(run: string): boolean {
   const parts = run.split('_')
@@ -85,14 +80,14 @@ function text(value: unknown, maxLength: number): string | undefined {
 
 function integer(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isInteger(value)) return value
-  if (typeof value === 'string' && /^-?\d{1,10}$/.test(value.trim())) return Number(value.trim())
+  if (typeof value === 'string' && /^-?\d{1,10}$/.test(value.trim())) return Number(value)
   return undefined
 }
 
 function traceId(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined
   const trimmed = value.trim()
-  return /^[A-Za-z0-9_\-]{1,64}$/.test(trimmed) ? trimmed.slice(0, MAX_TRACE_ID_LENGTH) : undefined
+  return /^[A-Za-z0-9_\-]{1,64}$/.test(trimmed) ? trimmed : undefined
 }
 
 // Shapes covered:
@@ -104,14 +99,13 @@ function extractFromBody(body: unknown): Omit<ProviderErrorDiagnostics, 'endpoin
   const root = asRecord(body)
   const nested = asRecord(root.error)
   const firstError = Array.isArray(root.errors) ? asRecord(root.errors[0]) : {}
-  const oauthError = typeof root.error === 'string' ? root.error : undefined
 
   // `??` stops at the first field that yields a value, so later fallbacks are never scanned.
   return {
     type:
       text(nested.type, MAX_TYPE_LENGTH) ??
       text(root.error_type, MAX_TYPE_LENGTH) ??
-      text(oauthError, MAX_TYPE_LENGTH) ??
+      text(root.error, MAX_TYPE_LENGTH) ??
       text(root.title, MAX_TYPE_LENGTH),
     code: integer(nested.code) ?? integer(root.code) ?? integer(firstError.code),
     subcode: integer(nested.error_subcode) ?? integer(root.error_subcode),
