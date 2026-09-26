@@ -246,6 +246,17 @@ describe('redactProviderText', () => {
     expect(redacted).toBe('bad request code=[redacted] state=[redacted] see [url]')
   })
 
+  it('redacts credential assignments whose key has a prefix or a hyphen', () => {
+    expect(
+      redactProviderText(
+        'rejected ig_access_token=Ab1 id_token=Cd34 code-verifier=shortvalue appsecret_proof=e5 api_key=gh78',
+        300,
+      ),
+    ).toBe(
+      'rejected ig_access_token=[redacted] id_token=[redacted] code-verifier=[redacted] appsecret_proof=[redacted] api_key=[redacted]',
+    )
+  })
+
   it('keeps ordinary long words such as scope names', () => {
     expect(redactProviderText('Missing instagram_business_content_publish permission', 300)).toBe(
       'Missing instagram_business_content_publish permission',

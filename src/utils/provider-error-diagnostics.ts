@@ -24,9 +24,10 @@ const TOKEN_RUN = /[A-Za-z0-9_\-.~+/=#%|:]{20,}/g
 const LABELED_SECRET =
   /\b(?:authorization code|auth code|access token|refresh token|client secret|code verifier|code|token)\b[^A-Za-z0-9]{0,3}([A-Za-z0-9_\-.~+/=#%|:]{8,})/gi
 const URL_PATTERN = /\bhttps?:\/\/\S+/gi
-// Query-string style assignments such as `code=...` echoed back from a request.
+// Query-string style assignments such as `code=...` echoed back from a request. The key
+// only has to end in a credential name, so prefixed keys such as `ig_access_token=` match.
 const SECRET_ASSIGNMENT =
-  /\b(access_token|refresh_token|client_secret|code_verifier|code|state|token|secret|password|authorization)=\S+/gi
+  /(access_token|refresh_token|client_secret|code_verifier|code|state|token|secret|verifier|password|authorization|key|proof)=\S+/gi
 // C0 and C1 controls, Unicode line and paragraph separators, and bidi controls.
 const CONTROL_CHARS = /[\p{Cc}\p{Zl}\p{Zp}\p{Bidi_Control}]+/gu
 
