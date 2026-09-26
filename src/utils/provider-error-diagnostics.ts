@@ -27,7 +27,8 @@ const URL_PATTERN = /\bhttps?:\/\/\S+/gi
 // Query-string style assignments such as `code=...` echoed back from a request.
 const SECRET_ASSIGNMENT =
   /\b(access_token|refresh_token|client_secret|code_verifier|code|state|token|secret|password|authorization)=\S+/gi
-const CONTROL_CHARS = /[\u0000-\u001f\u007f]+/g
+// C0 and C1 controls, Unicode line and paragraph separators, and bidi controls.
+const CONTROL_CHARS = /[\p{Cc}\p{Zl}\p{Zp}\p{Bidi_Control}]+/gu
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}

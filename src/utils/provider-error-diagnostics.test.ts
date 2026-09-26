@@ -272,4 +272,10 @@ describe('redactProviderText', () => {
       `line one line two ${'word '.repeat(56)}wo…`,
     )
   })
+
+  it('replaces C1 controls, Unicode line separators, and bidi controls with a space', () => {
+    expect(redactProviderText('one\u0085two three four‮five\u009bsix', 300)).toBe(
+      'one two three four five six',
+    )
+  })
 })
