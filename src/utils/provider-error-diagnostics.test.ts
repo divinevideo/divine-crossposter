@@ -197,6 +197,16 @@ describe('providerErrorDiagnostics', () => {
       message: `${'word '.repeat(60)}…`,
     })
   })
+
+  it('still produces diagnostics when provider fields are several megabytes long', () => {
+    const error = new PlatformAdapterError('instagram', 'unknown_platform_error', 'failed', 400, {
+      error_type: 'OAuthException',
+      error_message: `Invalid token ${'a'.repeat(6_000_000)}`,
+      detail: 'b'.repeat(6_000_000),
+    })
+
+    expect(providerErrorDiagnostics(error)).toEqual({ type: 'OAuthException', message: 'Invalid token [redacted]…' })
+  })
 })
 
 describe('redactProviderText', () => {
@@ -282,6 +292,10 @@ describe('redactProviderText', () => {
     expect(redactProviderText(`line one\nline two ${'word '.repeat(100)}`, 300)).toBe(
       `line one line two ${'word '.repeat(56)}wo…`,
     )
+  })
+
+  it('redacts a word cut at the scan bound instead of logging its fragment', () => {
+    expect(redactProviderText(`${'x'.repeat(4090)} Zk3p9qrstuvw`, 300)).toBe('[redacted] [redacted]…')
   })
 
   it('replaces C1 controls, Unicode line separators, and bidi controls with a space', () => {

@@ -14,6 +14,9 @@ export type ProviderErrorDiagnostics = {
 const MAX_MESSAGE_LENGTH = 300
 const MAX_TYPE_LENGTH = 100
 const MAX_TRACE_ID_LENGTH = 64
+// Provider strings are scanned only this far. The regex passes can exhaust the engine
+// on a multi-megabyte field, which would lose the whole log line.
+const MAX_SCAN_LENGTH = 4096
 const REDACTED = '[redacted]'
 
 // Token-alphabet runs. A labeled code or token is never treated as a name.
@@ -50,8 +53,16 @@ function isCredentialRun(run: string, allowNames = true): boolean {
   return /\d/.test(run) || /[A-Z]/.test(run) || run.length >= 20
 }
 
+// A word cut at the scan bound is redacted whole, since its remainder could be too
+// short for TOKEN_RUN to recognize.
+function scanWindow(value: string): string {
+  if (value.length <= MAX_SCAN_LENGTH) return value
+  const head = value.slice(0, MAX_SCAN_LENGTH)
+  return `${/\s/.test(value[MAX_SCAN_LENGTH]) ? head : head.replace(/\S+$/, REDACTED)}…`
+}
+
 export function redactProviderText(value: string, maxLength: number): string {
-  const scrubbed = value
+  const scrubbed = scanWindow(value)
     .replace(CONTROL_CHARS, ' ')
     .replace(URL_PATTERN, '[url]')
     .replace(SECRET_ASSIGNMENT, (_match, key: string) => `${key}=${REDACTED}`)
@@ -81,10 +92,6 @@ function traceId(value: unknown): string | undefined {
   return /^[A-Za-z0-9_\-]{1,64}$/.test(trimmed) ? trimmed.slice(0, MAX_TRACE_ID_LENGTH) : undefined
 }
 
-function firstDefined<T>(...values: (T | undefined)[]): T | undefined {
-  return values.find((value) => value !== undefined)
-}
-
 // Shapes covered:
 // - Meta Graph:           { error: { message, type, code, error_subcode, fbtrace_id } }
 // - Instagram token:      { error_type, code, error_message }
@@ -96,23 +103,22 @@ function extractFromBody(body: unknown): Omit<ProviderErrorDiagnostics, 'endpoin
   const firstError = Array.isArray(root.errors) ? asRecord(root.errors[0]) : {}
   const oauthError = typeof root.error === 'string' ? root.error : undefined
 
+  // `??` stops at the first field that yields a value, so later fallbacks are never scanned.
   return {
-    type: firstDefined(
-      text(nested.type, MAX_TYPE_LENGTH),
-      text(root.error_type, MAX_TYPE_LENGTH),
-      text(oauthError, MAX_TYPE_LENGTH),
+    type:
+      text(nested.type, MAX_TYPE_LENGTH) ??
+      text(root.error_type, MAX_TYPE_LENGTH) ??
+      text(oauthError, MAX_TYPE_LENGTH) ??
       text(root.title, MAX_TYPE_LENGTH),
-    ),
-    code: firstDefined(integer(nested.code), integer(root.code), integer(firstError.code)),
-    subcode: firstDefined(integer(nested.error_subcode), integer(root.error_subcode)),
-    message: firstDefined(
-      text(nested.message, MAX_MESSAGE_LENGTH),
-      text(root.error_message, MAX_MESSAGE_LENGTH),
-      text(root.error_description, MAX_MESSAGE_LENGTH),
-      text(root.detail, MAX_MESSAGE_LENGTH),
+    code: integer(nested.code) ?? integer(root.code) ?? integer(firstError.code),
+    subcode: integer(nested.error_subcode) ?? integer(root.error_subcode),
+    message:
+      text(nested.message, MAX_MESSAGE_LENGTH) ??
+      text(root.error_message, MAX_MESSAGE_LENGTH) ??
+      text(root.error_description, MAX_MESSAGE_LENGTH) ??
+      text(root.detail, MAX_MESSAGE_LENGTH) ??
       text(firstError.message, MAX_MESSAGE_LENGTH),
-    ),
-    traceId: firstDefined(traceId(nested.fbtrace_id), traceId(root.fbtrace_id)),
+    traceId: traceId(nested.fbtrace_id) ?? traceId(root.fbtrace_id),
   }
 }
 
