@@ -294,6 +294,12 @@ describe('redactProviderText', () => {
     )
   })
 
+  it('does not split an emoji when capping a message', () => {
+    // Compared as JSON, the form the log line is written in: a split emoji shows up there
+    // as a lone \ud83d escape, which strict JSON parsers reject.
+    expect(JSON.stringify(redactProviderText(`${'a '.repeat(149)}b😀c`, 300))).toBe(`"${'a '.repeat(149)}b…"`)
+  })
+
   it('redacts a word cut at the scan bound instead of logging its fragment', () => {
     expect(redactProviderText(`${'x'.repeat(4090)} Zk3p9qrstuvw`, 300)).toBe('[redacted] [redacted]…')
   })

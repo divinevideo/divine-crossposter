@@ -71,7 +71,10 @@ export function redactProviderText(value: string, maxLength: number): string {
     )
     .replace(TOKEN_RUN, (run) => (isCredentialRun(run) ? REDACTED : run))
     .trim()
-  return scrubbed.length > maxLength ? `${scrubbed.slice(0, maxLength)}…` : scrubbed
+  if (scrubbed.length <= maxLength) return scrubbed
+  // Never end on the first half of a surrogate pair; a lone surrogate breaks strict JSON parsers.
+  const end = /[\uD800-\uDBFF]/.test(scrubbed.charAt(maxLength - 1)) ? maxLength - 1 : maxLength
+  return `${scrubbed.slice(0, end)}…`
 }
 
 function text(value: unknown, maxLength: number): string | undefined {
