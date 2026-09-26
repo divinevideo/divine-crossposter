@@ -93,7 +93,7 @@ expired
 
 `oauth_states.metadata_json` links the short-lived state to the opaque attempt ID. Unknown callback states are not persisted, preventing attacker-controlled state values from becoming durable data.
 
-Every known callback transition updates the attempt before redirecting. Connection, preference, and `connected`-attempt writes execute as one D1 batch so a storage failure cannot leave a partial active connection; a failed batch is followed by a best-effort `storage_failed` transition. Logs contain only structured fields safe for operations: event name, attempt ID, platform, lifecycle status, sanitized failure code, and provider HTTP status. Logs never contain a state value, pubkey, callback query string, authorization code, access token, refresh token, secret, or raw provider response.
+Every known callback transition updates the attempt before redirecting. Connection, preference, and `connected`-attempt writes execute as one D1 batch so a storage failure cannot leave a partial active connection; a failed batch is followed by a best-effort `storage_failed` transition. Logs contain only structured fields safe for operations: event name, attempt ID, platform, lifecycle status, sanitized failure code, and provider HTTP status. A failed provider request adds a `providerError` object built from an allowlist: the failing endpoint's origin and path (no query; a path segment that is not a known API path word or a short version segment is replaced), the provider's error type, numeric code and subcode, a trace id, and the error message capped at 300 characters with URLs, `key=value` secrets, and token-like runs redacted. A value of 8 or more characters after a label such as `code`, `token`, or `client secret` is redacted when it has a digit, an uppercase letter, or 20 or more characters, even when it looks like a scope name. An unlabeled run of 20 or more token-alphabet characters is redacted unless it is under 40 characters and every underscore-separated piece is 2 to 12 lowercase letters. No other body field is copied. Logs never contain a state value, pubkey, callback query string, authorization code, access token, refresh token, secret, or raw provider response.
 
 The scheduled reconciler marks overdue `started` attempts `expired` and deletes their expired OAuth states. This turns abandoned flows into measurable outcomes and prevents the stale-state buildup visible in production today.
 
@@ -105,7 +105,7 @@ Provider failures are classified at the boundary:
 
 - an explicit user/provider denial becomes `provider_denied`;
 - any other consumed callback that cannot safely proceed (missing code, non-denial provider error, route/state mismatch, or provider disabled after start) becomes `callback_failed` with no provider text retained;
-- a non-success token response becomes `token_exchange_failed` with only the HTTP status retained;
+- a non-success token response becomes `token_exchange_failed`; the attempt keeps only the HTTP status, and the transition log adds the allowlisted `providerError` described above;
 - a non-success `/2/users/me` response or an empty user ID becomes `account_lookup_failed`;
 - an encryption or atomic persistence failure becomes `storage_failed` without leaving a partial active connection;
 - a fully stored encrypted connection becomes `connected`.
@@ -167,7 +167,7 @@ Tests are written before implementation changes.
 - starting X OAuth creates both state and `started` attempt records;
 - provider denial records `provider_denied` and returns a safe redirect reason;
 - non-denial provider errors and missing-code callbacks record `callback_failed` without provider text;
-- token exchange failure records only the sanitized class and HTTP status;
+- token exchange failure records only the sanitized class and HTTP status, and logs only the allowlisted, redacted `providerError` fields;
 - account lookup failure is distinct from token exchange failure;
 - encryption or persistence failure records `storage_failed` and leaves no partial active connection;
 - success atomically stores the encrypted connection and manual preference and marks the attempt connected;
@@ -219,7 +219,7 @@ Implementation may proceed through local and manual production validation while 
 - A real eligible Divine video is posted to X by Crossposter.
 - The production job reaches `posted` with an external post ID and URL.
 - The active X connection and nonempty canonical external ID/URL are verified with safe boolean/count queries.
-- No secret, OAuth code, token, callback query string, provider body, or private key appears in logs or diagnostic tables.
+- No secret, OAuth code, token, callback query string, raw provider body, or private key appears in logs or diagnostic tables.
 - Abandoned and failed OAuth attempts are distinguishable in D1 by sanitized lifecycle state.
 - The X upload sequence matches the current official v2 chunked-upload protocol.
 - The queue has a DLQ and bounded retry configuration.
