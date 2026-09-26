@@ -189,6 +189,24 @@ describe('redactProviderText', () => {
     expect(redactProviderText('rejected ABCDEFGHIJKLMNOPQRST now', 300)).toBe('rejected [redacted] now')
   })
 
+  it('redacts a lowercase underscore-separated authorization code', () => {
+    expect(redactProviderText('Authorization code abcdefghijklmnopqrst_uvwxzy rejected', 300)).toBe(
+      'Authorization code [redacted] rejected',
+    )
+  })
+
+  it('redacts a lowercase credential path segment', async () => {
+    const error = await normalizeProviderError(
+      'instagram',
+      withUrl(
+        Response.json({ error: { message: 'bad', code: 100 } }, { status: 400 }),
+        'https://graph.instagram.com/oauth/abcdefghijklmnopqrst',
+      ),
+    )
+
+    expect(providerErrorDiagnostics(error)?.endpoint).toBe('https://graph.instagram.com/oauth/[redacted]')
+  })
+
   it('redacts a short labeled authorization code', () => {
     expect(redactProviderText('Authorization code ABCDEFGH rejected', 300)).toBe(
       'Authorization code [redacted] rejected',

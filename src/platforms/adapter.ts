@@ -61,12 +61,42 @@ export class PlatformAdapterError extends Error {
   }
 }
 
+const SAFE_PATH_SEGMENTS = new Set([
+  'o',
+  'i',
+  'auth',
+  'authorize',
+  'oauth',
+  'oauth2',
+  'token',
+  'access_token',
+  'refresh_access_token',
+  'users',
+  'me',
+  'user',
+  'info',
+  'media',
+  'upload',
+  'tweets',
+  'post',
+  'publish',
+  'creator_info',
+  'query',
+  'video',
+  'init',
+  'status',
+  'fetch',
+  'youtube',
+  'channels',
+  'media_publish',
+])
+
 function isSafePathSegment(segment: string): boolean {
   return (
     segment === '' ||
     /^\d{1,2}$/.test(segment) ||
-    /^[a-z][a-z_-]{0,31}$/.test(segment) ||
-    /^[a-z]{1,12}\d{1,2}$/.test(segment)
+    /^v\d{1,3}(?:\.\d{1,2})?$/.test(segment) ||
+    SAFE_PATH_SEGMENTS.has(segment)
   )
 }
 
