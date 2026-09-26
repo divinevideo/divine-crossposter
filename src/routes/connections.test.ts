@@ -368,14 +368,21 @@ describe('connection routes', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('classifies an X token endpoint 401 without logging the provider body', async () => {
+  it('classifies an X token endpoint 401 and logs only allowlisted provider error fields', async () => {
     const attemptId = 'oauth_attempt_token_401'
     const stateId = 'private-state-token-401'
-    const providerBody = 'private-provider-token-body'
+    const echoedToken = 'Zm9vYmFyMTIzNDU2Nzg5MGFiY2RlZg'
     await createTrackedState(db, { attemptId, stateId })
     const logSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     fetchMock.mockResolvedValueOnce(
-      Response.json({ error: 'invalid_grant', error_description: providerBody }, { status: 401 }),
+      Response.json(
+        {
+          error: 'invalid_grant',
+          error_description: `Value passed for the token ${echoedToken} was invalid.`,
+          access_token: 'private-access-token',
+        },
+        { status: 401 },
+      ),
     )
 
     const response = await app.request(
@@ -390,7 +397,63 @@ describe('connection routes', () => {
       failureCode: 'token_exchange_failed',
       providerStatus: 401,
     })
-    expect(JSON.stringify(logSpy.mock.calls)).not.toContain(providerBody)
+    const logged = JSON.stringify(logSpy.mock.calls)
+    expect(logged).not.toContain(echoedToken)
+    for (const forbidden of ['private-access-token', 'private-auth-code', stateId, 'x-secret', 'private-code-verifier']) {
+      expect(logged).not.toContain(forbidden)
+    }
+    const transition = JSON.parse(logSpy.mock.calls[0][0] as string) as Record<string, unknown>
+    expect(transition.providerError).toEqual({
+      type: 'invalid_grant',
+      message: 'Value passed for the token [redacted] was invalid.',
+    })
+  })
+
+  it('logs Instagram token exchange error details without secrets', async () => {
+    const attemptId = 'oauth_attempt_instagram_400'
+    const stateId = 'private-state-instagram-400'
+    await createTrackedState(db, { attemptId, stateId, platform: 'instagram' })
+    const logSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    const providerResponse = Response.json(
+      { error_type: 'OAuthException', code: 400, error_message: 'Invalid platform app' },
+      { status: 400 },
+    )
+    Object.defineProperty(providerResponse, 'url', { value: 'https://api.instagram.com/oauth/access_token' })
+    fetchMock.mockResolvedValueOnce(providerResponse)
+
+    const response = await app.request(
+      `/connections/instagram/callback?code=private-instagram-code&state=${stateId}`,
+      {},
+      testEnv(db, {
+        ENABLE_INSTAGRAM: 'true',
+        INSTAGRAM_CLIENT_ID: 'instagram-client',
+        INSTAGRAM_CLIENT_SECRET: 'private-instagram-secret',
+      }),
+    )
+
+    expect(response.headers.get('location')).toContain('reason=token_exchange_failed')
+    await expect(getOAuthAttempt(db, attemptId)).resolves.toMatchObject({
+      status: 'token_exchange_failed',
+      providerStatus: 400,
+    })
+    const logged = JSON.stringify(logSpy.mock.calls)
+    for (const forbidden of ['private-instagram-code', 'private-instagram-secret', stateId, '/connections/instagram/callback']) {
+      expect(logged).not.toContain(forbidden)
+    }
+    expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual({
+      event: 'oauth_callback_transition',
+      attemptId,
+      platform: 'instagram',
+      status: 'token_exchange_failed',
+      failureCode: 'token_exchange_failed',
+      providerStatus: 400,
+      providerError: {
+        endpoint: 'https://api.instagram.com/oauth/access_token',
+        type: 'OAuthException',
+        code: 400,
+        message: 'Invalid platform app',
+      },
+    })
   })
 
   it('classifies an X account lookup 503', async () => {
@@ -452,7 +515,7 @@ describe('connection routes', () => {
       expect(call).toHaveLength(1)
       const record = JSON.parse(String(call[0])) as Record<string, unknown>
       expect(Object.keys(record).sort()).toEqual(
-        ['attemptId', 'event', 'failureCode', 'platform', 'providerStatus', 'status'].sort(),
+        ['attemptId', 'event', 'failureCode', 'platform', 'providerError', 'providerStatus', 'status'].sort(),
       )
     }
     const logs = JSON.stringify(logSpy.mock.calls)

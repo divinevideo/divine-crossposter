@@ -25,6 +25,7 @@ import type {
 } from '../types'
 import { decryptToken, encryptToken, generatePKCE, generateRandomId } from '../utils/crypto'
 import { HttpError } from '../utils/http'
+import { providerErrorDiagnostics } from '../utils/provider-error-diagnostics'
 import { sanitizeProviderMetadata } from '../utils/provider-metadata'
 import { assertAllowedReturnUrl, parsePlatform, parsePreferenceMode } from '../utils/validation'
 
@@ -144,6 +145,7 @@ function logAttemptTransition(
     status,
     failureCode,
     providerStatus: providerStatus(error),
+    providerError: providerErrorDiagnostics(error),
   }))
 }
 

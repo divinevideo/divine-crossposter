@@ -54,8 +54,20 @@ export class PlatformAdapterError extends Error {
     message: string,
     public readonly providerStatus?: number,
     public readonly providerResponse?: unknown,
+    // Origin and path of the failing request only; the query can carry secrets.
+    public readonly providerEndpoint?: string,
   ) {
     super(message)
+  }
+}
+
+export function providerEndpoint(response: Response): string | undefined {
+  if (!response.url) return undefined
+  try {
+    const url = new URL(response.url)
+    return `${url.origin}${url.pathname}`
+  } catch {
+    return undefined
   }
 }
 
@@ -95,7 +107,14 @@ export async function normalizeProviderError(platform: Platform, response: Respo
     code = 'media_rejected'
   }
 
-  return new PlatformAdapterError(platform, code, `${platform} provider request failed`, response.status, providerResponse)
+  return new PlatformAdapterError(
+    platform,
+    code,
+    `${platform} provider request failed`,
+    response.status,
+    providerResponse,
+    providerEndpoint(response),
+  )
 }
 
 function normalizeTikTokErrorCode(providerResponse: unknown): ErrorCode | null {
@@ -131,7 +150,14 @@ export async function expectProviderOk(platform: Platform, response: Response): 
   if (platform === 'tiktok') {
     const code = normalizeTikTokErrorCode(providerResponse)
     if (code) {
-      throw new PlatformAdapterError(platform, code, `${platform} provider request failed`, response.status, providerResponse)
+      throw new PlatformAdapterError(
+        platform,
+        code,
+        `${platform} provider request failed`,
+        response.status,
+        providerResponse,
+        providerEndpoint(response),
+      )
     }
   }
   return providerResponse
