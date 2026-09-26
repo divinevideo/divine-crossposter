@@ -234,10 +234,18 @@ describe('redactProviderText', () => {
     )
   })
 
-  it('redacts a 20-character run with a digit and a 40-character run without one', () => {
-    expect(
-      redactProviderText('code a1b2c3d4e5f6g7h8i9j0 and verifier abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN end', 300),
-    ).toBe('code [redacted] and verifier [redacted] end')
+  it.each([
+    ['a 20-character lowercase word', 'rejected abcdefghijklmnopqrst now', 'rejected [redacted] now'],
+    ['a scope-shaped run with a piece over 12 letters', 'rejected abcdefghijklmnopqrst_uvwxyz now', 'rejected [redacted] now'],
+    ['a scope-shaped run of 40 characters', 'rejected abcdefghij_klmnopqrst_uvwxyzabcd_efghijk now', 'rejected [redacted] now'],
+    ['a labeled scope-shaped code', 'Authorization code abcdefghij_klmnopqrst rejected', 'Authorization code [redacted] rejected'],
+    ['a labeled 8-character code with a digit', 'code abcdefg1 rejected', 'code [redacted] rejected'],
+  ])('redacts %s', (_case, input, expected) => {
+    expect(redactProviderText(input, 300)).toBe(expected)
+  })
+
+  it('keeps an ordinary lowercase word after a label', () => {
+    expect(redactProviderText('Missing token parameter', 300)).toBe('Missing token parameter')
   })
 
   it('caps message length and strips control characters', () => {

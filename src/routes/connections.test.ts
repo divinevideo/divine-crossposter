@@ -521,6 +521,59 @@ describe('connection routes', () => {
     })
   })
 
+  it('logs a failed Instagram account lookup with its versioned endpoint', async () => {
+    const attemptId = 'oauth_attempt_instagram_account'
+    const stateId = 'private-state-instagram-account'
+    const longLivedToken = 'IGAAVxY3Zk9QaBZAFp0dTRmR2ZAYVU5WVE3OUVPb2pXVkx1TG9uZ0xpdmVk'
+    await createTrackedState(db, { attemptId, stateId, platform: 'instagram' })
+    const logSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    fetchMock
+      .mockImplementationOnce(respondAtRequestedUrl(Response.json({ access_token: 'IGAAVxY3Zk9QaBZAFp0dTRmR2ZAYVU5' })))
+      .mockImplementationOnce(
+        respondAtRequestedUrl(Response.json({ access_token: longLivedToken, token_type: 'bearer', expires_in: 5_183_944 })),
+      )
+      .mockImplementationOnce(
+        respondAtRequestedUrl(
+          Response.json(
+            {
+              error: {
+                message: 'Invalid OAuth access token - Cannot parse access token',
+                type: 'OAuthException',
+                code: 190,
+                fbtrace_id: 'AmX3kQ9sLb2vT7nR4pW1yZ8',
+              },
+            },
+            { status: 400 },
+          ),
+        ),
+      )
+
+    await app.request(
+      `/connections/instagram/callback?code=private-instagram-code&state=${stateId}`,
+      {},
+      testEnv(db, {
+        ENABLE_INSTAGRAM: 'true',
+        INSTAGRAM_CLIENT_ID: 'instagram-client',
+        INSTAGRAM_CLIENT_SECRET: 'private-instagram-secret',
+      }),
+    )
+
+    await expect(getOAuthAttempt(db, attemptId)).resolves.toMatchObject({
+      status: 'account_lookup_failed',
+      providerStatus: 400,
+    })
+    // The account lookup sends the long-lived token in its query string.
+    expect(JSON.stringify(logSpy.mock.calls)).not.toContain(longLivedToken)
+    const transition = JSON.parse(logSpy.mock.calls[0][0] as string) as Record<string, unknown>
+    expect(transition.providerError).toEqual({
+      endpoint: 'https://graph.instagram.com/v23.0/me',
+      type: 'OAuthException',
+      code: 190,
+      message: 'Invalid OAuth access token - Cannot parse access token',
+      traceId: 'AmX3kQ9sLb2vT7nR4pW1yZ8',
+    })
+  })
+
   it('classifies an X account lookup 503', async () => {
     await createTrackedState(db, { attemptId: 'oauth_attempt_account_503', stateId: 'private-state-account-503' })
     fetchMock
