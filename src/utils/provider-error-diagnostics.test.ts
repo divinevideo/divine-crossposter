@@ -168,6 +168,24 @@ describe('providerErrorDiagnostics', () => {
     expect(providerErrorDiagnostics(error)).toEqual({ code: 1 })
   })
 
+  it('keeps a provider error type name such as GraphMethodException', () => {
+    const error = new PlatformAdapterError('instagram', 'unknown_platform_error', 'failed', 400, {
+      error: {
+        message: "Unsupported get request. Object with ID 'me' does not exist",
+        type: 'GraphMethodException',
+        code: 100,
+        error_subcode: 33,
+      },
+    })
+
+    expect(providerErrorDiagnostics(error)).toEqual({
+      type: 'GraphMethodException',
+      code: 100,
+      subcode: 33,
+      message: "Unsupported get request. Object with ID 'me' does not exist",
+    })
+  })
+
   it('caps the type at 100 characters and the message at 300', () => {
     const error = new PlatformAdapterError('instagram', 'unknown_platform_error', 'failed', 400, {
       error_type: 'word '.repeat(30),
@@ -240,6 +258,7 @@ describe('redactProviderText', () => {
     ['a scope-shaped run of 40 characters', 'rejected abcdefghij_klmnopqrst_uvwxyzabcd_efghijk now', 'rejected [redacted] now'],
     ['a labeled scope-shaped code', 'Authorization code abcdefghij_klmnopqrst rejected', 'Authorization code [redacted] rejected'],
     ['a labeled 8-character code with a digit', 'code abcdefg1 rejected', 'code [redacted] rejected'],
+    ['a CamelCase run that is not an error type name', 'rejected AbcdefGhijklMnopqrStuv now', 'rejected [redacted] now'],
   ])('redacts %s', (_case, input, expected) => {
     expect(redactProviderText(input, 300)).toBe(expected)
   })

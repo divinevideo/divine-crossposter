@@ -16,9 +16,10 @@ const MAX_TYPE_LENGTH = 100
 const MAX_TRACE_ID_LENGTH = 64
 const REDACTED = '[redacted]'
 
-// Token-alphabet runs. A labeled code or token is never treated as a scope
-// name. An unlabeled 20+ run is a credential unless every underscore-separated
-// piece is 2 to 12 lowercase letters.
+// Token-alphabet runs. A labeled code or token is never treated as a name.
+// An unlabeled 20+ run is a credential unless it is under 40 characters and is
+// a scope name (every underscore-separated piece is 2 to 12 lowercase letters)
+// or an error type name such as GraphMethodException.
 const TOKEN_RUN = /[A-Za-z0-9_\-.~+/=#%|:]{20,}/g
 const LABELED_SECRET =
   /\b(?:authorization code|auth code|access token|refresh token|client secret|code verifier|code|token)\b[^A-Za-z0-9]{0,3}([A-Za-z0-9_\-.~+/=#%|:]{8,})/gi
@@ -37,8 +38,13 @@ function isScopeName(run: string): boolean {
   return parts.length >= 2 && parts.every((part) => /^[a-z]{2,12}$/.test(part))
 }
 
-function isCredentialRun(run: string, allowScopeName = true): boolean {
-  if (allowScopeName && isScopeName(run) && run.length < 40) return false
+// Provider error class names, such as Meta's GraphMethodException.
+function isErrorTypeName(run: string): boolean {
+  return /^(?:[A-Z][a-z]+)+(?:Exception|Error)$/.test(run)
+}
+
+function isCredentialRun(run: string, allowNames = true): boolean {
+  if (allowNames && run.length < 40 && (isScopeName(run) || isErrorTypeName(run))) return false
   return /\d/.test(run) || /[A-Z]/.test(run) || run.length >= 20
 }
 
