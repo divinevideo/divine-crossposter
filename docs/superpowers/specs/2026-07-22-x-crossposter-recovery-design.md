@@ -105,7 +105,7 @@ Provider failures are classified at the boundary:
 
 - an explicit user/provider denial becomes `provider_denied`;
 - any other consumed callback that cannot safely proceed (missing code, non-denial provider error, route/state mismatch, or provider disabled after start) becomes `callback_failed` with no provider text retained;
-- a non-success token response becomes `token_exchange_failed` with only the HTTP status retained;
+- a non-success token response becomes `token_exchange_failed`; the attempt keeps only the HTTP status, and the transition log adds the allowlisted `providerError` described above;
 - a non-success `/2/users/me` response or an empty user ID becomes `account_lookup_failed`;
 - an encryption or atomic persistence failure becomes `storage_failed` without leaving a partial active connection;
 - a fully stored encrypted connection becomes `connected`.
@@ -167,7 +167,7 @@ Tests are written before implementation changes.
 - starting X OAuth creates both state and `started` attempt records;
 - provider denial records `provider_denied` and returns a safe redirect reason;
 - non-denial provider errors and missing-code callbacks record `callback_failed` without provider text;
-- token exchange failure records only the sanitized class and HTTP status;
+- token exchange failure records only the sanitized class and HTTP status, and logs only the allowlisted, redacted `providerError` fields;
 - account lookup failure is distinct from token exchange failure;
 - encryption or persistence failure records `storage_failed` and leaves no partial active connection;
 - success atomically stores the encrypted connection and manual preference and marks the attempt connected;
@@ -219,7 +219,7 @@ Implementation may proceed through local and manual production validation while 
 - A real eligible Divine video is posted to X by Crossposter.
 - The production job reaches `posted` with an external post ID and URL.
 - The active X connection and nonempty canonical external ID/URL are verified with safe boolean/count queries.
-- No secret, OAuth code, token, callback query string, provider body, or private key appears in logs or diagnostic tables.
+- No secret, OAuth code, token, callback query string, raw provider body, or private key appears in logs or diagnostic tables.
 - Abandoned and failed OAuth attempts are distinguishable in D1 by sanitized lifecycle state.
 - The X upload sequence matches the current official v2 chunked-upload protocol.
 - The queue has a DLQ and bounded retry configuration.
