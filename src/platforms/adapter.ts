@@ -100,8 +100,7 @@ function isSafePathSegment(segment: string): boolean {
   )
 }
 
-export function providerEndpoint(response: Response): string | undefined {
-  if (!response.url) return undefined
+function providerEndpoint(response: Response): string | undefined {
   try {
     const url = new URL(response.url)
     const pathname = url.pathname
@@ -112,6 +111,22 @@ export function providerEndpoint(response: Response): string | undefined {
   } catch {
     return undefined
   }
+}
+
+function providerRequestError(
+  platform: Platform,
+  code: ErrorCode,
+  response: Response,
+  providerResponse: unknown,
+): PlatformAdapterError {
+  return new PlatformAdapterError(
+    platform,
+    code,
+    `${platform} provider request failed`,
+    response.status,
+    providerResponse,
+    providerEndpoint(response),
+  )
 }
 
 function includesMediaRejection(value: unknown): boolean {
@@ -150,14 +165,7 @@ export async function normalizeProviderError(platform: Platform, response: Respo
     code = 'media_rejected'
   }
 
-  return new PlatformAdapterError(
-    platform,
-    code,
-    `${platform} provider request failed`,
-    response.status,
-    providerResponse,
-    providerEndpoint(response),
-  )
+  return providerRequestError(platform, code, response, providerResponse)
 }
 
 function normalizeTikTokErrorCode(providerResponse: unknown): ErrorCode | null {
@@ -193,14 +201,7 @@ export async function expectProviderOk(platform: Platform, response: Response): 
   if (platform === 'tiktok') {
     const code = normalizeTikTokErrorCode(providerResponse)
     if (code) {
-      throw new PlatformAdapterError(
-        platform,
-        code,
-        `${platform} provider request failed`,
-        response.status,
-        providerResponse,
-        providerEndpoint(response),
-      )
+      throw providerRequestError(platform, code, response, providerResponse)
     }
   }
   return providerResponse
