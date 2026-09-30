@@ -30,25 +30,33 @@ function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
 
-/** Signs a well-formed event whose pubkey field is spelled by `spell`, for example in uppercase hex. */
-async function signWithPubkeySpelling(spell: (pubkey: string) => string): Promise<Record<string, unknown>> {
-  const pubkey = spell(NIP98_TEST_PUBKEY)
-  const tags = [
-    ['u', URL_WITH_QUERY],
-    ['method', 'GET'],
-  ]
-  const digest = new Uint8Array(
-    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([0, pubkey, NOW, 27235, tags, '']))),
-  )
-  return {
-    id: toHex(digest),
-    pubkey,
+type RawEvent = { pubkey?: unknown; created_at?: unknown; kind?: unknown; tags?: unknown; content?: unknown }
+
+/**
+ * Signs an event with exactly these field values, whatever their types, so the signature is
+ * genuine and only the verifier's own checks can be what rejects the event.
+ */
+async function signRaw(fields: RawEvent = {}, secretKey: Uint8Array = NIP98_TEST_SECRET_KEY) {
+  const event = {
+    pubkey: NIP98_TEST_PUBKEY,
     created_at: NOW,
     kind: 27235,
-    tags,
+    tags: [
+      ['u', URL_WITH_QUERY],
+      ['method', 'GET'],
+    ] as unknown,
     content: '',
-    sig: toHex(schnorr.sign(digest, NIP98_TEST_SECRET_KEY)),
+    ...fields,
   }
+  const digest = new Uint8Array(
+    await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(
+        JSON.stringify([0, event.pubkey, event.created_at, event.kind, event.tags, event.content]),
+      ),
+    ),
+  )
+  return { id: toHex(digest), ...event, sig: toHex(schnorr.sign(digest, secretKey)) } as Record<string, unknown>
 }
 
 describe('verifyNip98Request', () => {
@@ -207,7 +215,7 @@ describe('verifyNip98Request', () => {
     // database key. This event is validly signed, so only the spelling check stops one key
     // from acting as a second, differently keyed account.
     it('a validly signed event whose pubkey is spelled in uppercase hex', async () => {
-      const event = await signWithPubkeySpelling((pubkey) => pubkey.toUpperCase())
+      const event = await signRaw({ pubkey: NIP98_TEST_PUBKEY.toUpperCase() })
       expect(event.pubkey).not.toBe(NIP98_TEST_PUBKEY)
       await expect(verify(getRequest(), event)).rejects.toMatchObject({ status: 401 })
     })
@@ -220,6 +228,31 @@ describe('verifyNip98Request', () => {
         extraTags: [['padding', 'a'.repeat(16 * 1024)]],
       })
       await expect(verify(getRequest(), event)).rejects.toMatchObject({ status: 401 })
+    })
+
+    // Each of these is genuinely signed, so only the verifier's own shape checks can reject it.
+    // Without its guard the event would either be accepted or crash with a 500 instead of a 401.
+    const malformedFields: Array<[string, RawEvent]> = [
+      ['a created_at that is not a number', { created_at: 'abc' }],
+      ['a created_at with a fractional part', { created_at: NOW + 0.5 }],
+      ['a content that is not a string', { content: 7 }],
+      ['a tag value that is not a string', { tags: [['u', URL_WITH_QUERY], ['method', 1]] }],
+      ['tags that are not a list of lists', { tags: 'u' }],
+      ['no method tag', { tags: [['u', URL_WITH_QUERY]] }],
+    ]
+    it.each(malformedFields)('a validly signed event with %s', async (_name, fields) => {
+      const event = await signRaw(fields)
+      await expect(verify(getRequest(), event)).rejects.toMatchObject({ status: 401 })
+    })
+
+    it('a validly signed event whose sig is spelled in uppercase hex', async () => {
+      const event = await signRaw()
+      event.sig = String(event.sig).toUpperCase()
+      await expect(verify(getRequest(), event)).rejects.toMatchObject({ status: 401 })
+    })
+
+    it.each(['null', '5', '"text"'])('a credential whose JSON is not an object: %s', async (json) => {
+      await expect(verifyNip98Request(getRequest(), btoa(json), NOW)).rejects.toMatchObject({ status: 401 })
     })
   })
 })
