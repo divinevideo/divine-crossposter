@@ -26,6 +26,16 @@ async function verify(request: Request, event: Record<string, unknown>) {
   return verifyNip98Request(request, credential(nip98Header(event)), NOW)
 }
 
+/** The error an event is refused with, so a test can say which check refused it. */
+async function rejection(request: Request, event: Record<string, unknown>): Promise<{ status: number; message: string }> {
+  return verify(request, event).then(
+    () => {
+      throw new Error('expected the event to be rejected')
+    },
+    (error: { status: number; message: string }) => error,
+  )
+}
+
 function toHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
 }
@@ -120,10 +130,22 @@ describe('verifyNip98Request', () => {
       await expect(verify(getRequest(), event)).rejects.toMatchObject({ status: 401 })
     })
 
-    it('a signature from a different key than the claimed pubkey', async () => {
+    it('a pubkey swapped in after signing', async () => {
       const event = await signNip98Event({ url: URL_WITH_QUERY, method: 'GET', createdAt: NOW })
       event.pubkey = 'f'.repeat(64)
-      await expect(verify(getRequest(), event)).rejects.toMatchObject({ status: 401 })
+      const error = await rejection(getRequest(), event)
+      expect(error).toMatchObject({ status: 401 })
+      // The id no longer matches the content, so this never reaches the signature check.
+      expect(error.message).toContain('does not match its content')
+    })
+
+    it('a well-formed event signed by a different key than its pubkey', async () => {
+      // The id is computed for the victim's pubkey and the signature is made with another key,
+      // which is what a real forgery looks like: only the signature check can refuse it.
+      const victim = toHex(schnorr.getPublicKey(new Uint8Array(32).fill(9)))
+      const error = await rejection(getRequest(), await signRaw({ pubkey: victim }))
+      expect(error).toMatchObject({ status: 401 })
+      expect(error.message).toContain('signature is invalid')
     })
 
     it('an id that does not match the event content', async () => {
