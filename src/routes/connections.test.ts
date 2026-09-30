@@ -4,6 +4,7 @@ import { listConnections, upsertConnection } from '../db/connections'
 import { createOAuthAttempt, getOAuthAttempt } from '../db/oauth-attempts'
 import { createOAuthState } from '../db/oauth-states'
 import { getPreferences, setPreference } from '../db/preferences'
+import { NIP98_TEST_PUBKEY, nip98Header, signNip98Event } from '../auth/test-helpers'
 import { applyMigrations, connection, PUBKEY_A } from '../db/test-helpers'
 import { decryptToken } from '../utils/crypto'
 import { transitionAttempt } from '../services/connections'
@@ -172,6 +173,35 @@ describe('connection routes', () => {
       status: 'started',
       expiresAt: 1_783_383_000,
     })
+  })
+
+  // The route parses the JSON body from a clone. NIP-98 hashes the original body while authenticating,
+  // so if the route consumed it first, authentication would fail with a 500 instead of reading the body.
+  it('starts X for a NIP-98 signed request and still reads its JSON body', async () => {
+    const body = JSON.stringify({ returnUrl: 'https://divine.video/settings/crossposting' })
+    const event = await signNip98Event({
+      url: 'http://localhost/connections/x/start',
+      method: 'POST',
+      createdAt: Math.floor(Date.now() / 1000),
+      body,
+    })
+
+    const response = await app.request(
+      '/connections/x/start',
+      {
+        method: 'POST',
+        headers: { authorization: nip98Header(event), 'content-type': 'application/json' },
+        body,
+      },
+      testEnv(db),
+    )
+
+    expect(response.status).toBe(200)
+    const started = (await response.json()) as { state: string }
+    await expect(
+      db.prepare('SELECT pubkey, return_url FROM oauth_states WHERE state_id = ?').bind(started.state).first(),
+    ).resolves.toMatchObject({ pubkey: NIP98_TEST_PUBKEY, return_url: 'https://divine.video/settings/crossposting' })
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('marks a started attempt storage_failed when OAuth state storage fails', async () => {
