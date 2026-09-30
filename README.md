@@ -140,7 +140,6 @@ Provider notes:
 - X uses OAuth 2.0 plus chunked media upload before post creation. In the X Developer Portal, configure the production application as an **OAuth 2.0 confidential web application** with **Read and write** permission, callback `https://crossposter.divine.video/connections/x/callback`, and scopes `tweet.read tweet.write users.read media.write offline.access`. The portal client ID and client secret must be the pair installed as the `TWITTER_CLIENT_ID` and `TWITTER_CLIENT_SECRET` Worker secrets.
 - YouTube Shorts uses the YouTube Data API upload flow; Shorts classification depends on video format, duration, and metadata conventions.
 
-
 ## Authentication
 
 Every authenticated route accepts either header. Both resolve to the caller's full hex pubkey.
@@ -161,13 +160,13 @@ The base64 uses the standard alphabet (RFC 4648 §4) over the UTF-8 event JSON. 
 
 Replay: there is no per-event-id replay store. A header is accepted while its `created_at` is within 60 seconds of server time in either direction, so a signer whose clock runs ahead can produce one that stays valid for up to two minutes, and it is only valid for the identical URL, method, and body. A replay store fits NIP-98 poorly: events carry no nonce and `created_at` has one-second resolution, so identical requests signed in the same second share an event id, and a per-event-id store would reject those legitimate repeats as well as cost a D1 write on every authenticated request. Send requests over HTTPS. Production redirects plain HTTP at the Cloudflare edge, but the Worker itself does not refuse an event signed for an `http://` URL.
 
-### Keycast bearer token (legacy)
+### Keycast bearer token
 
 ```
 Authorization: Bearer <Keycast access token>
 ```
 
-Validated by calling Keycast `POST /api/nostr` `get_public_key`. Kept for app builds that predate NIP-98 signing; new clients should not send it, because that token can sign arbitrary events for the user.
+Validated by calling Keycast `POST /api/nostr` `get_public_key`. The setup page and app builds that predate NIP-98 signing still send it. New clients should send NIP-98 instead, because this token can sign arbitrary events for the user.
 
 ## Routes
 
@@ -178,15 +177,14 @@ Public:
 | `GET` | `/` | Self-contained setup UI: Divine login, connect platforms, set posting switches. |
 | `GET` | `/health` | Liveness JSON: `{ "ok": true, "service": "divine-crossposter" }`. |
 | `GET` | `/platforms` | Provider readiness. HTML by default; JSON via `?format=json` or `Accept: application/json`. |
+| `GET` | `/connections/:platform/callback` | OAuth callback, reached by the provider's redirect, which carries no `Authorization` header; the stored `state` identifies the attempt. Exchanges the provider code, stores encrypted tokens, and redirects to the stored return URL. |
 
 Authenticated routes require one of the credentials described under [Authentication](#authentication):
-
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/connections` | List connected external accounts for the authenticated Divine pubkey. |
 | `POST` | `/connections/:platform/start` | Create OAuth state and return an authorization URL. Body: `{ "returnUrl": "https://..." }`. |
-| `GET` | `/connections/:platform/callback` | OAuth callback. Exchanges the provider code, stores encrypted tokens, and redirects to the stored return URL. |
 | `DELETE` | `/connections/:platform/:connection_id` | Disconnect a platform account and stop future crossposts for it. |
 | `GET` | `/preferences` | List per-platform posting preferences. |
 | `PUT` | `/preferences/:platform` | Set `manual`, `automatic`, or `disabled` mode for a platform. |
