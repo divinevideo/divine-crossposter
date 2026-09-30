@@ -94,6 +94,19 @@ describe('authenticateRequest', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('reads the Nostr scheme in any letter case', async () => {
+    const event = await signNip98Event({
+      url: 'https://crossposter.divine.video/connections',
+      method: 'GET',
+      createdAt: Math.floor(Date.now() / 1000),
+    })
+
+    for (const scheme of ['nostr', 'NOSTR', 'nOsTr']) {
+      const header = nip98Header(event).replace(/^Nostr/, scheme)
+      await expect(authenticateRequest(request(header), env())).resolves.toMatchObject({ scheme: 'nip98' })
+    }
+  })
+
   it('rejects an invalid NIP-98 Nostr header with 401 without falling back to Keycast', async () => {
     const event = await signNip98Event({
       url: 'https://crossposter.divine.video/other',

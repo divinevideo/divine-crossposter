@@ -94,6 +94,22 @@ describe('verifyNip98Request', () => {
       })
       await expect(verify(getRequest(), event)).resolves.toMatchObject({ pubkey: NIP98_TEST_PUBKEY })
     })
+
+    it('a header with its base64 padding removed, as the NIP-98 example header is', async () => {
+      // Events of different lengths need zero, one or two padding characters; cover all three.
+      for (const filler of ['', 'a', 'aa']) {
+        const event = await signNip98Event({
+          url: URL_WITH_QUERY,
+          method: 'GET',
+          createdAt: NOW,
+          extraTags: [['filler', filler]],
+        })
+        const unpadded = credential(nip98Header(event)).replace(/=+$/, '')
+        await expect(verifyNip98Request(getRequest(), unpadded, NOW)).resolves.toMatchObject({
+          pubkey: NIP98_TEST_PUBKEY,
+        })
+      }
+    })
   })
 
   describe('rejects with 401', () => {
@@ -253,6 +269,22 @@ describe('verifyNip98Request', () => {
 
     it.each(['null', '5', '"text"'])('a credential whose JSON is not an object: %s', async (json) => {
       await expect(verifyNip98Request(getRequest(), btoa(json), NOW)).rejects.toMatchObject({ status: 401 })
+    })
+
+    // Blossom (BUD-11) sends its own `Authorization: Nostr` tokens as base64url. NIP-98 says base64,
+    // the README says the URL-safe alphabet is not accepted, and this keeps it that way.
+    it('the URL-safe base64 alphabet', async () => {
+      // These characters encode to '+' and '/' in standard base64, so the two alphabets really differ.
+      const event = await signNip98Event({
+        url: URL_WITH_QUERY,
+        method: 'GET',
+        createdAt: NOW,
+        extraTags: [['filler', '??>>~~??>>~~']],
+      })
+      const standard = credential(nip98Header(event))
+      expect(standard).toMatch(/[+/]/)
+      const urlSafe = standard.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+      await expect(verifyNip98Request(getRequest(), urlSafe, NOW)).rejects.toMatchObject({ status: 401 })
     })
   })
 })
