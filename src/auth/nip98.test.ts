@@ -120,6 +120,19 @@ describe('verifyNip98Request', () => {
         })
       }
     })
+
+    it('an event laid out the way divine-mobile signs it, with a created_at tag before the payload', async () => {
+      const get = await signNip98Event({ url: URL_WITH_QUERY, method: 'GET', createdAt: NOW, createdAtTag: true })
+      const post = await signNip98Event({
+        url: POST_URL,
+        method: 'POST',
+        createdAt: NOW,
+        body: BODY,
+        createdAtTag: true,
+      })
+      await expect(verify(getRequest(), get)).resolves.toMatchObject({ pubkey: NIP98_TEST_PUBKEY })
+      await expect(verify(postRequest(), post)).resolves.toMatchObject({ pubkey: NIP98_TEST_PUBKEY })
+    })
   })
 
   describe('rejects with 401', () => {

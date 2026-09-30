@@ -18,18 +18,26 @@ export type Nip98TestEventOptions = {
   extraTags?: string[][]
   omitPayload?: boolean
   payloadOverride?: string
+  /** Adds divine-mobile's non-standard ['created_at', seconds] tag, between the method and payload tags. */
+  createdAtTag?: boolean
 }
 
 async function sha256Hex(data: string): Promise<string> {
   return toHex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(data))))
 }
 
-/** Builds and signs a NIP-98 event the way divine-mobile's Nip98AuthService does. */
+/**
+ * Builds and signs a NIP-98 event. By default it carries only the tags the NIP defines; pass
+ * `createdAtTag` for the exact layout divine-mobile's Nip98AuthService signs: u, method, created_at, payload.
+ */
 export async function signNip98Event(options: Nip98TestEventOptions): Promise<Record<string, unknown>> {
   const tags: string[][] = [
     ['u', options.url],
     ['method', options.method],
   ]
+  if (options.createdAtTag) {
+    tags.push(['created_at', String(options.createdAt)])
+  }
   if (!options.omitPayload && (options.body !== undefined || options.payloadOverride !== undefined)) {
     tags.push(['payload', options.payloadOverride ?? (await sha256Hex(options.body ?? ''))])
   }
