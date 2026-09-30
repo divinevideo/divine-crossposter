@@ -1,11 +1,13 @@
 import { schnorr } from '@noble/curves/secp256k1.js'
 import { describe, expect, it } from 'vitest'
+import { VIDEO_EVENT_ID } from '../db/test-helpers'
 import { verifyNip98Request } from './nip98'
 import { NIP98_TEST_PUBKEY, NIP98_TEST_SECRET_KEY, nip98Header, signNip98Event } from './test-helpers'
 
 const NOW = 1_800_000_000
-const URL_WITH_QUERY = 'https://crossposter.divine.video/videos/abc/crossposts?platform=x&limit=5'
-const POST_URL = 'https://crossposter.divine.video/videos/abc/crossposts'
+const OTHER_EVENT_ID = 'd'.repeat(64)
+const URL_WITH_QUERY = `https://crossposter.divine.video/videos/${VIDEO_EVENT_ID}/crossposts?platform=x&limit=5`
+const POST_URL = `https://crossposter.divine.video/videos/${VIDEO_EVENT_ID}/crossposts`
 const BODY = JSON.stringify({ platforms: ['x'] })
 
 function credential(header: string): string {
@@ -78,7 +80,7 @@ describe('verifyNip98Request', () => {
 
     it('a u tag that differs only by host case, an explicit default port, and a fragment', async () => {
       const event = await signNip98Event({
-        url: 'HTTPS://CrossPoster.Divine.Video:443/videos/abc/crossposts?platform=x&limit=5#section',
+        url: `HTTPS://CrossPoster.Divine.Video:443/videos/${VIDEO_EVENT_ID}/crossposts?platform=x&limit=5#section`,
         method: 'GET',
         createdAt: NOW,
       })
@@ -123,7 +125,7 @@ describe('verifyNip98Request', () => {
 
     it('a u tag for a different path', async () => {
       const event = await signNip98Event({
-        url: 'https://crossposter.divine.video/videos/other/crossposts?platform=x&limit=5',
+        url: `https://crossposter.divine.video/videos/${OTHER_EVENT_ID}/crossposts?platform=x&limit=5`,
         method: 'GET',
         createdAt: NOW,
       })
@@ -137,7 +139,7 @@ describe('verifyNip98Request', () => {
 
     it('a u tag for a different host', async () => {
       const event = await signNip98Event({
-        url: 'https://evil.example/videos/abc/crossposts?platform=x&limit=5',
+        url: `https://evil.example/videos/${VIDEO_EVENT_ID}/crossposts?platform=x&limit=5`,
         method: 'GET',
         createdAt: NOW,
       })
@@ -189,7 +191,7 @@ describe('verifyNip98Request', () => {
 
     it('a u tag whose query parameters are reordered', async () => {
       const event = await signNip98Event({
-        url: 'https://crossposter.divine.video/videos/abc/crossposts?limit=5&platform=x',
+        url: `https://crossposter.divine.video/videos/${VIDEO_EVENT_ID}/crossposts?limit=5&platform=x`,
         method: 'GET',
         createdAt: NOW,
       })
