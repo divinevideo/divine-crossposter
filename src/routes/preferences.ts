@@ -15,7 +15,7 @@ preferences.get('/preferences', async (c) => {
 
 preferences.put('/preferences/:platform', async (c) => {
   try {
-    const body = (await c.req.json().catch(() => ({}))) as { mode?: unknown }
+    const body = (await c.req.raw.clone().json().catch(() => ({}))) as { mode?: unknown }
     return jsonResponse({ preference: await updatePreference(c.req.raw, c.env, c.req.param('platform'), body.mode) })
   } catch (error) {
     return errorResponse(error)

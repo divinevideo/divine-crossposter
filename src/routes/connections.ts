@@ -20,7 +20,7 @@ connections.get('/connections', async (c) => {
 
 connections.post('/connections/:platform/start', async (c) => {
   try {
-    const body = (await c.req.json().catch(() => ({}))) as { returnUrl?: unknown }
+    const body = (await c.req.raw.clone().json().catch(() => ({}))) as { returnUrl?: unknown }
     return jsonResponse(await startConnection(c.req.raw, c.env, c.req.param('platform'), body.returnUrl))
   } catch (error) {
     return errorResponse(error)

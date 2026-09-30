@@ -27,7 +27,7 @@ D1 is the source of truth for connection state, preferences, idempotent job crea
 
 ### How it fits Divine
 
-- **Auth** comes from Keycast (`login.divine.video`). Authenticated routes accept a Divine bearer token, which the Worker validates by calling Keycast `POST /api/nostr` with `{"method":"get_public_key","params":[]}`. The returned full hex pubkey is the authenticated Divine user.
+- **Auth** proves which Nostr pubkey is calling. The preferred credential is a [NIP-98](https://github.com/nostr-protocol/nips/blob/master/98.md) signed HTTP-auth event, verified locally, so any Nostr signer (local key, bunker, Amber, Keycast) works and the Worker never holds a credential that can sign on the user's behalf. Older app builds send a Keycast (`login.divine.video`) OAuth bearer token instead, which the Worker validates by calling Keycast `POST /api/nostr` with `{"method":"get_public_key","params":[]}`; that path stays supported. See [Authentication](#authentication).
 - **Video ownership and eligibility** come from Funnelcake (`api.divine.video`). Crosspost creation verifies the Divine video event belongs to the authenticated pubkey and is eligible before queueing work.
 
 ## Getting started
@@ -140,6 +140,35 @@ Provider notes:
 - X uses OAuth 2.0 plus chunked media upload before post creation. In the X Developer Portal, configure the production application as an **OAuth 2.0 confidential web application** with **Read and write** permission, callback `https://crossposter.divine.video/connections/x/callback`, and scopes `tweet.read tweet.write users.read media.write offline.access`. The portal client ID and client secret must be the pair installed as the `TWITTER_CLIENT_ID` and `TWITTER_CLIENT_SECRET` Worker secrets.
 - YouTube Shorts uses the YouTube Data API upload flow; Shorts classification depends on video format, duration, and metadata conventions.
 
+
+## Authentication
+
+Every authenticated route accepts either header. Both resolve to the caller's full hex pubkey.
+
+### NIP-98 (preferred)
+
+```
+Authorization: Nostr <base64(JSON of a signed kind-27235 event)>
+```
+
+The base64 is standard (RFC 4648, with padding) over the UTF-8 event JSON. The Worker checks, and answers `401 unauthorized` if any check fails:
+
+- `kind` is `27235`, and `id` and the BIP-340 Schnorr `sig` are valid for `pubkey`.
+- `created_at` is within 60 seconds of server time, in either direction.
+- The `u` tag is the exact absolute request URL: scheme, host, path, and the query string byte-for-byte in the same order, e.g. `https://crossposter.divine.video/videos/<event_id>/crossposts`. Both URLs go through standard URL parsing first, so host letter case and an explicit default port do not matter and a fragment is ignored; otherwise the path and query must match, so a missing, extra, or reordered query parameter fails. Sign the same URL string you send.
+- The `method` tag equals the HTTP method (`GET`, `POST`, `PUT`, `DELETE`).
+- When the request has a non-empty body, a `payload` tag with the lowercase hex SHA-256 of the exact body bytes is required. A `payload` tag that is present is always checked, so signing `sha256("")` on a bodyless `POST` is fine.
+
+Replay: there is no per-event-id replay store. A header is only valid for 60 seconds and only for the identical URL, method, and body, and clients such as divine-mobile deliberately reuse a signed header for identical requests inside that window. Transport is HTTPS only.
+
+### Keycast bearer token (legacy)
+
+```
+Authorization: Bearer <Keycast access token>
+```
+
+Validated by calling Keycast `POST /api/nostr` `get_public_key`. Kept for app builds that predate NIP-98 signing; new clients should not send it, because that token can sign arbitrary events for the user.
+
 ## Routes
 
 Public:
@@ -150,7 +179,8 @@ Public:
 | `GET` | `/health` | Liveness JSON: `{ "ok": true, "service": "divine-crossposter" }`. |
 | `GET` | `/platforms` | Provider readiness. HTML by default; JSON via `?format=json` or `Accept: application/json`. |
 
-Authenticated routes require `Authorization: Bearer <Keycast access token>`:
+Authenticated routes require one of the credentials described under [Authentication](#authentication):
+
 
 | Method | Path | Purpose |
 | --- | --- | --- |

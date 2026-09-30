@@ -4,6 +4,7 @@ import { upsertConnection } from '../db/connections'
 import { getPreferences, setPreference } from '../db/preferences'
 import { applyMigrations, connection, PUBKEY_A } from '../db/test-helpers'
 import type { Env } from '../types'
+import { nip98Header, signNip98Event } from '../auth/test-helpers'
 
 function testEnv(db: D1Database): Env {
   return {
@@ -157,5 +158,51 @@ describe('preference routes', () => {
     await expect(getPreferences(db, PUBKEY_A)).resolves.toMatchObject([
       { platform: 'tiktok', mode: 'disabled', connectionId: null, automaticEnabledAt: null },
     ])
+  })
+
+  it('authenticates a NIP-98 signed PUT and still reads its JSON body', async () => {
+    const body = JSON.stringify({ mode: 'automatic' })
+    const event = await signNip98Event({
+      url: 'http://localhost/preferences/tiktok',
+      method: 'PUT',
+      createdAt: Math.floor(Date.now() / 1000),
+      body,
+    })
+
+    const response = await app.request(
+      '/preferences/tiktok',
+      {
+        method: 'PUT',
+        headers: { authorization: nip98Header(event), 'content-type': 'application/json' },
+        body,
+      },
+      testEnv(db),
+    )
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'not_connected' } })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('rejects a NIP-98 signed PUT whose body was changed after signing', async () => {
+    const event = await signNip98Event({
+      url: 'http://localhost/preferences/tiktok',
+      method: 'PUT',
+      createdAt: Math.floor(Date.now() / 1000),
+      body: JSON.stringify({ mode: 'off' }),
+    })
+
+    const response = await app.request(
+      '/preferences/tiktok',
+      {
+        method: 'PUT',
+        headers: { authorization: nip98Header(event), 'content-type': 'application/json' },
+        body: JSON.stringify({ mode: 'automatic' }),
+      },
+      testEnv(db),
+    )
+
+    expect(response.status).toBe(401)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })
