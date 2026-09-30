@@ -151,7 +151,7 @@ Every authenticated route accepts either header. Both resolve to the caller's fu
 Authorization: Nostr <base64(JSON of a signed kind-27235 event)>
 ```
 
-The base64 is standard (RFC 4648, with padding) over the UTF-8 event JSON. The Worker checks, and answers `401 unauthorized` if any check fails:
+The base64 uses the standard alphabet (RFC 4648 §4) over the UTF-8 event JSON. Send it with its `=` padding; a header with the padding removed is also accepted. The URL-safe alphabet (`-` and `_`) is not accepted and answers `401`. The Worker checks, and answers `401 unauthorized` if any check fails:
 
 - `kind` is `27235`, and `id` and the BIP-340 Schnorr `sig` are valid for `pubkey`.
 - `created_at` is within 60 seconds of server time, in either direction.
