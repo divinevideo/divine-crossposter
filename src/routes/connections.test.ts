@@ -204,6 +204,29 @@ describe('connection routes', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  // `null` is valid JSON, so it parses instead of reaching the fallback; the route must still answer 400, not 500.
+  it('answers 400 for a NIP-98 signed start whose JSON body is null', async () => {
+    const event = await signNip98Event({
+      url: 'http://localhost/connections/x/start',
+      method: 'POST',
+      createdAt: Math.floor(Date.now() / 1000),
+      body: 'null',
+    })
+
+    const response = await app.request(
+      '/connections/x/start',
+      {
+        method: 'POST',
+        headers: { authorization: nip98Header(event), 'content-type': 'application/json' },
+        body: 'null',
+      },
+      testEnv(db),
+    )
+
+    expect(response.status).toBe(400)
+    await expect(db.prepare('SELECT COUNT(*) AS count FROM oauth_states').first()).resolves.toMatchObject({ count: 0 })
+  })
+
   it('marks a started attempt storage_failed when OAuth state storage fails', async () => {
     fetchMock.mockResolvedValueOnce(authResponse())
     await db.prepare(

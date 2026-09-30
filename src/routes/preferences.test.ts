@@ -184,6 +184,29 @@ describe('preference routes', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  // `null` is valid JSON, so it parses instead of reaching the fallback; the route must still answer 400, not 500.
+  it('answers 400 for a NIP-98 signed PUT whose JSON body is null', async () => {
+    const event = await signNip98Event({
+      url: 'http://localhost/preferences/tiktok',
+      method: 'PUT',
+      createdAt: Math.floor(Date.now() / 1000),
+      body: 'null',
+    })
+
+    const response = await app.request(
+      '/preferences/tiktok',
+      {
+        method: 'PUT',
+        headers: { authorization: nip98Header(event), 'content-type': 'application/json' },
+        body: 'null',
+      },
+      testEnv(db),
+    )
+
+    expect(response.status).toBe(400)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('rejects a NIP-98 signed PUT whose body was changed after signing', async () => {
     const event = await signNip98Event({
       url: 'http://localhost/preferences/tiktok',
