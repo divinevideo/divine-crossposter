@@ -288,7 +288,7 @@ Add these helpers to connections.ts:
       error?: unknown,
     ): Promise<void>
 
-transitionAttempt updates D1 and logs only event, attemptId, platform, status, failureCode, and providerStatus. It must not log state, pubkey, code, token, callback URL/query, or provider body.
+transitionAttempt updates D1 and logs only event, attemptId, platform, status, failureCode, providerStatus, and the allowlisted providerError that the design spec describes. It must not log state, pubkey, code, token, callback URL/query, or raw provider body.
 
 Split completeConnectionCallback into explicit denial, unusable callback, token exchange, account lookup, encryption, and storage stages. After consuming a tracked state, classify only access_denied/user_denied as provider_denied; classify every other provider error, missing code, route/state platform mismatch, or now-disabled adapter as callback_failed before redirecting. An empty account ID is account_lookup_failed. Existing untracked states remain backward-compatible because a missing attempt ID is a no-op.
 

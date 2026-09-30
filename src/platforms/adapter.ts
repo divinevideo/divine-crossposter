@@ -54,8 +54,63 @@ export class PlatformAdapterError extends Error {
     message: string,
     public readonly providerStatus?: number,
     public readonly providerResponse?: unknown,
+    // Origin and scrubbed path of the failing request; the query can carry secrets.
+    public readonly providerEndpoint?: string,
   ) {
     super(message)
+  }
+}
+
+const SAFE_PATH_SEGMENTS = new Set([
+  'o',
+  'i',
+  'auth',
+  'authorize',
+  'oauth',
+  'oauth2',
+  'token',
+  'access_token',
+  'refresh_access_token',
+  'users',
+  'me',
+  'user',
+  'info',
+  'media',
+  'upload',
+  'tweets',
+  'post',
+  'publish',
+  'creator_info',
+  'query',
+  'video',
+  'init',
+  'status',
+  'fetch',
+  'youtube',
+  'channels',
+  'media_publish',
+])
+
+function isSafePathSegment(segment: string): boolean {
+  return (
+    segment === '' ||
+    /^\d{1,2}$/.test(segment) ||
+    /^v\d{1,3}(?:\.\d{1,2})?$/.test(segment) ||
+    SAFE_PATH_SEGMENTS.has(segment)
+  )
+}
+
+export function providerEndpoint(response: Response): string | undefined {
+  if (!response.url) return undefined
+  try {
+    const url = new URL(response.url)
+    const pathname = url.pathname
+      .split('/')
+      .map((segment) => (isSafePathSegment(segment) ? segment : '[redacted]'))
+      .join('/')
+    return `${url.origin}${pathname}`
+  } catch {
+    return undefined
   }
 }
 
@@ -95,7 +150,14 @@ export async function normalizeProviderError(platform: Platform, response: Respo
     code = 'media_rejected'
   }
 
-  return new PlatformAdapterError(platform, code, `${platform} provider request failed`, response.status, providerResponse)
+  return new PlatformAdapterError(
+    platform,
+    code,
+    `${platform} provider request failed`,
+    response.status,
+    providerResponse,
+    providerEndpoint(response),
+  )
 }
 
 function normalizeTikTokErrorCode(providerResponse: unknown): ErrorCode | null {
@@ -131,7 +193,14 @@ export async function expectProviderOk(platform: Platform, response: Response): 
   if (platform === 'tiktok') {
     const code = normalizeTikTokErrorCode(providerResponse)
     if (code) {
-      throw new PlatformAdapterError(platform, code, `${platform} provider request failed`, response.status, providerResponse)
+      throw new PlatformAdapterError(
+        platform,
+        code,
+        `${platform} provider request failed`,
+        response.status,
+        providerResponse,
+        providerEndpoint(response),
+      )
     }
   }
   return providerResponse
