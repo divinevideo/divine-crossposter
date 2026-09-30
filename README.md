@@ -159,7 +159,7 @@ The base64 uses the standard alphabet (RFC 4648 §4) over the UTF-8 event JSON. 
 - The `method` tag equals the HTTP method (`GET`, `POST`, `PUT`, `DELETE`).
 - When the request has a non-empty body, a `payload` tag with the lowercase hex SHA-256 of the exact body bytes is required. A `payload` tag that is present is always checked, so signing `sha256("")` on a bodyless `POST` is fine.
 
-Replay: there is no per-event-id replay store. A header is only valid for 60 seconds and only for the identical URL, method, and body, and clients such as divine-mobile deliberately reuse a signed header for identical requests inside that window. Transport is HTTPS only.
+Replay: there is no per-event-id replay store. A header is accepted while its `created_at` is within 60 seconds of server time in either direction, so a signer whose clock runs ahead can produce one that stays valid for up to two minutes, and it is only valid for the identical URL, method, and body. A replay store fits NIP-98 poorly: events carry no nonce and `created_at` has one-second resolution, so identical requests signed in the same second share an event id, and a per-event-id store would reject those legitimate repeats as well as cost a D1 write on every authenticated request. Send requests over HTTPS. Production redirects plain HTTP at the Cloudflare edge, but the Worker itself does not refuse an event signed for an `http://` URL.
 
 ### Keycast bearer token (legacy)
 
