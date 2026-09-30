@@ -156,6 +156,11 @@ export async function verifyNip98Request(
     throw unauthorized('nostr auth event method does not match the request')
   }
 
+  // Prove the signature before any work that scales with the request body: buffering
+  // and hashing it is the expensive step, and a caller that cannot sign must not be
+  // able to make the Worker do it.
+  await verifyEventSignature(event)
+
   const signedPayload = tagValue(event, 'payload')?.toLowerCase()
   const body = request.body === null ? new ArrayBuffer(0) : await request.clone().arrayBuffer()
   if (body.byteLength > 0 && !signedPayload) {
@@ -164,8 +169,6 @@ export async function verifyNip98Request(
   if (signedPayload !== undefined && signedPayload !== (await sha256Hex(body))) {
     throw unauthorized('nostr auth event payload hash does not match the request body')
   }
-
-  await verifyEventSignature(event)
 
   return { pubkey: event.pubkey, eventId: event.id }
 }

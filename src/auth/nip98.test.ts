@@ -322,4 +322,35 @@ describe('verifyNip98Request', () => {
       await expect(verifyNip98Request(getRequest(), urlSafe, NOW)).rejects.toMatchObject({ status: 401 })
     })
   })
+
+  describe('spends no work on the request body until the signature is proven', () => {
+    it('leaves the body unread when the signature is forged', async () => {
+      const CHUNKS = 64
+      const CHUNK_BYTES = 16 * 1024
+      const digest = new Uint8Array(
+        await crypto.subtle.digest('SHA-256', new Uint8Array(CHUNKS * CHUNK_BYTES).fill(97)),
+      )
+      const payload = toHex(digest)
+      const event = await signNip98Event({ url: POST_URL, method: 'POST', createdAt: NOW, payloadOverride: payload })
+      const sig = event.sig as string
+      event.sig = `${sig.slice(0, -1)}${sig.endsWith('0') ? '1' : '0'}`
+
+      let pulled = 0
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (pulled >= CHUNKS) return controller.close()
+          pulled++
+          // A fresh buffer per chunk: the runtime detaches buffers it has been handed.
+          controller.enqueue(new Uint8Array(CHUNK_BYTES).fill(97))
+        },
+      })
+      const request = new Request(POST_URL, { method: 'POST', body, duplex: 'half' } as RequestInit)
+
+      const error = await rejection(request, event)
+      expect(error).toMatchObject({ status: 401 })
+      expect(error.message).toContain('signature')
+      // The stream may prefetch a chunk on construction; it must not be drained.
+      expect(pulled).toBeLessThan(CHUNKS)
+    })
+  })
 })
