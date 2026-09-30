@@ -1,6 +1,7 @@
+import { schnorr } from '@noble/curves/secp256k1.js'
 import { describe, expect, it } from 'vitest'
 import { verifyNip98Request } from './nip98'
-import { NIP98_TEST_PUBKEY, nip98Header, signNip98Event } from './test-helpers'
+import { NIP98_TEST_PUBKEY, NIP98_TEST_SECRET_KEY, nip98Header, signNip98Event } from './test-helpers'
 
 const NOW = 1_800_000_000
 const URL_WITH_QUERY = 'https://crossposter.divine.video/videos/abc/crossposts?platform=x&limit=5'
@@ -21,6 +22,31 @@ function postRequest(body = BODY, url = POST_URL): Request {
 
 async function verify(request: Request, event: Record<string, unknown>) {
   return verifyNip98Request(request, credential(nip98Header(event)), NOW)
+}
+
+function toHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+/** Signs a well-formed event whose pubkey field is spelled by `spell`, for example in uppercase hex. */
+async function signWithPubkeySpelling(spell: (pubkey: string) => string): Promise<Record<string, unknown>> {
+  const pubkey = spell(NIP98_TEST_PUBKEY)
+  const tags = [
+    ['u', URL_WITH_QUERY],
+    ['method', 'GET'],
+  ]
+  const digest = new Uint8Array(
+    await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify([0, pubkey, NOW, 27235, tags, '']))),
+  )
+  return {
+    id: toHex(digest),
+    pubkey,
+    created_at: NOW,
+    kind: 27235,
+    tags,
+    content: '',
+    sig: toHex(schnorr.sign(digest, NIP98_TEST_SECRET_KEY)),
+  }
 }
 
 describe('verifyNip98Request', () => {
@@ -48,6 +74,15 @@ describe('verifyNip98Request', () => {
       const future = await signNip98Event({ url: URL_WITH_QUERY, method: 'GET', createdAt: NOW + 60 })
       await expect(verify(getRequest(), past)).resolves.toMatchObject({ pubkey: NIP98_TEST_PUBKEY })
       await expect(verify(getRequest(), future)).resolves.toMatchObject({ pubkey: NIP98_TEST_PUBKEY })
+    })
+
+    it('a u tag that differs only by host case, an explicit default port, and a fragment', async () => {
+      const event = await signNip98Event({
+        url: 'HTTPS://CrossPoster.Divine.Video:443/videos/abc/crossposts?platform=x&limit=5#section',
+        method: 'GET',
+        createdAt: NOW,
+      })
+      await expect(verify(getRequest(), event)).resolves.toMatchObject({ pubkey: NIP98_TEST_PUBKEY })
     })
   })
 
@@ -149,6 +184,39 @@ describe('verifyNip98Request', () => {
     it('an event missing required fields', async () => {
       const event = await signNip98Event({ url: URL_WITH_QUERY, method: 'GET', createdAt: NOW })
       delete event.sig
+      await expect(verify(getRequest(), event)).rejects.toMatchObject({ status: 401 })
+    })
+
+    it('a u tag whose query parameters are reordered', async () => {
+      const event = await signNip98Event({
+        url: 'https://crossposter.divine.video/videos/abc/crossposts?limit=5&platform=x',
+        method: 'GET',
+        createdAt: NOW,
+      })
+      await expect(verify(getRequest(), event)).rejects.toMatchObject({ status: 401 })
+    })
+
+    it('a u tag with a query parameter the request does not carry', async () => {
+      const event = await signNip98Event({ url: `${URL_WITH_QUERY}&extra=1`, method: 'GET', createdAt: NOW })
+      await expect(verify(getRequest(), event)).rejects.toMatchObject({ status: 401 })
+    })
+
+    // NIP-01 defines a pubkey as lowercase hex, and the string returned here becomes a
+    // database key. This event is validly signed, so only the spelling check stops one key
+    // from acting as a second, differently keyed account.
+    it('a validly signed event whose pubkey is spelled in uppercase hex', async () => {
+      const event = await signWithPubkeySpelling((pubkey) => pubkey.toUpperCase())
+      expect(event.pubkey).not.toBe(NIP98_TEST_PUBKEY)
+      await expect(verify(getRequest(), event)).rejects.toMatchObject({ status: 401 })
+    })
+
+    it('a validly signed event whose encoded header is over the size cap', async () => {
+      const event = await signNip98Event({
+        url: URL_WITH_QUERY,
+        method: 'GET',
+        createdAt: NOW,
+        extraTags: [['padding', 'a'.repeat(16 * 1024)]],
+      })
       await expect(verify(getRequest(), event)).rejects.toMatchObject({ status: 401 })
     })
   })
