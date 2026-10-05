@@ -13,6 +13,7 @@
     "test:once": "vitest run"
   },
   "dependencies": {
+    "@noble/curves": "^2.4.0",
     "hono": "^4.10.6"
   },
   "devDependencies": {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { authenticateRequest } from './keycast'
 import type { Env } from '../types'
+import { NIP98_TEST_PUBKEY, nip98Header, signNip98Event } from './test-helpers'
 
 const PUBKEY = 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789'
 
@@ -44,7 +45,7 @@ describe('authenticateRequest', () => {
 
     const result = await authenticateRequest(request('Bearer keycast-token'), env())
 
-    expect(result).toEqual({ pubkey: PUBKEY, token: 'keycast-token' })
+    expect(result).toEqual({ scheme: 'keycast', pubkey: PUBKEY, token: 'keycast-token' })
     expect(fetchMock).toHaveBeenCalledWith(
       'https://keycast.divine.video/api/nostr',
       expect.objectContaining({
@@ -78,5 +79,42 @@ describe('authenticateRequest', () => {
 
     fetchMock.mockResolvedValueOnce(Response.json({ result: '' }))
     await expect(authenticateRequest(request('Bearer empty'), env())).rejects.toMatchObject({ status: 502 })
+  })
+
+  it('accepts a NIP-98 Nostr header without calling Keycast', async () => {
+    const event = await signNip98Event({
+      url: 'https://crossposter.divine.video/connections',
+      method: 'GET',
+      createdAt: Math.floor(Date.now() / 1000),
+    })
+
+    const result = await authenticateRequest(request(nip98Header(event)), env())
+
+    expect(result).toEqual({ scheme: 'nip98', pubkey: NIP98_TEST_PUBKEY, eventId: event.id })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('reads the Nostr scheme in any letter case', async () => {
+    const event = await signNip98Event({
+      url: 'https://crossposter.divine.video/connections',
+      method: 'GET',
+      createdAt: Math.floor(Date.now() / 1000),
+    })
+
+    for (const scheme of ['nostr', 'NOSTR', 'nOsTr']) {
+      const header = nip98Header(event).replace(/^Nostr/, scheme)
+      await expect(authenticateRequest(request(header), env())).resolves.toMatchObject({ scheme: 'nip98' })
+    }
+  })
+
+  it('rejects an invalid NIP-98 Nostr header with 401 without falling back to Keycast', async () => {
+    const event = await signNip98Event({
+      url: 'https://crossposter.divine.video/other',
+      method: 'GET',
+      createdAt: Math.floor(Date.now() / 1000),
+    })
+
+    await expect(authenticateRequest(request(nip98Header(event)), env())).rejects.toMatchObject({ status: 401 })
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

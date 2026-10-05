@@ -2,19 +2,25 @@ import type { Env } from '../types'
 import { loadConfig } from '../config'
 import { HttpError } from '../utils/http'
 import { normalizePubkey } from '../utils/validation'
+import { verifyNip98Request } from './nip98'
+
+/** Who made the request, and which credential proved it. */
+export type AuthenticatedCaller =
+  | { scheme: 'nip98'; pubkey: string; eventId: string }
+  | { scheme: 'keycast'; pubkey: string; token: string }
 
 type KeycastPublicKeyResponse = {
   result?: unknown
   error?: unknown
 }
 
-function parseBearerToken(request: Request): string {
+function parseAuthorization(request: Request): { scheme: 'nostr' | 'bearer'; credential: string } {
   const authorization = request.headers.get('authorization')
-  const match = authorization?.match(/^Bearer\s+(.+)$/i)
-  if (!match || !match[1].trim()) {
-    throw new HttpError(401, 'unauthorized', 'missing bearer token')
+  const match = authorization?.match(/^(Nostr|Bearer)\s+(.+)$/i)
+  if (!match || !match[2].trim()) {
+    throw new HttpError(401, 'unauthorized', 'missing bearer token or nostr auth event')
   }
-  return match[1].trim()
+  return { scheme: match[1].toLowerCase() as 'nostr' | 'bearer', credential: match[2].trim() }
 }
 
 function upstreamAuthError(status: number): HttpError {
@@ -27,8 +33,25 @@ function upstreamAuthError(status: number): HttpError {
   return new HttpError(502, 'keycast_unavailable', 'keycast auth failed')
 }
 
-export async function authenticateRequest(request: Request, env: Env): Promise<{ pubkey: string; token: string }> {
-  const token = parseBearerToken(request)
+/**
+ * Authenticates a request and returns the caller's full hex pubkey.
+ *
+ * Accepts either a NIP-98 signed event (`Authorization: Nostr <base64 event>`),
+ * verified locally, or a legacy Keycast OAuth token (`Authorization: Bearer`),
+ * validated by asking Keycast for the token's public key.
+ *
+ * Throws [HttpError] 401/403 for rejected credentials and 502 when Keycast
+ * is unreachable or malformed.
+ */
+export async function authenticateRequest(request: Request, env: Env): Promise<AuthenticatedCaller> {
+  const { scheme, credential } = parseAuthorization(request)
+  if (scheme === 'nostr') {
+    return { scheme: 'nip98', ...(await verifyNip98Request(request, credential)) }
+  }
+  return authenticateKeycastToken(credential, env)
+}
+
+async function authenticateKeycastToken(token: string, env: Env): Promise<AuthenticatedCaller> {
   const config = loadConfig(env)
 
   let response: Response
@@ -61,7 +84,7 @@ export async function authenticateRequest(request: Request, env: Env): Promise<{
   }
 
   try {
-    return { pubkey: normalizePubkey(body.result), token }
+    return { scheme: 'keycast', pubkey: normalizePubkey(body.result), token }
   } catch {
     throw new HttpError(502, 'keycast_malformed_response', 'keycast response was malformed')
   }

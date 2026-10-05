@@ -4,6 +4,7 @@ import { app } from '../index'
 import { recordAttempt } from '../db/attempts'
 import { upsertConnection } from '../db/connections'
 import { createOrGetJob } from '../db/jobs'
+import { NIP98_TEST_PUBKEY, nip98Header, signNip98Event } from '../auth/test-helpers'
 import { applyMigrations, connection, job, PUBKEY_A, VIDEO_EVENT_ID } from '../db/test-helpers'
 import type { Env } from '../types'
 
@@ -86,6 +87,40 @@ describe('crosspost routes', () => {
       jobs: [expect.objectContaining({ platform: 'tiktok', videoEventId: VIDEO_EVENT_ID, status: 'queued' })],
     })
     expect(queueSend).toHaveBeenCalledTimes(1)
+  })
+
+  // The route authenticates before it reads the body. NIP-98 hashes the original body while
+  // authenticating, so reading it first would make authentication fail with a 500.
+  it('creates manual crosspost jobs for a NIP-98 signed request and still reads its JSON body', async () => {
+    await upsertConnection(
+      db,
+      connection({ id: 'conn_nip98', pubkey: NIP98_TEST_PUBKEY, externalAccountId: 'external-account-nip98' }),
+    )
+    fetchMock.mockImplementation((url: string) => {
+      if (url === `https://api.divine.video/api/videos/${VIDEO_EVENT_ID}`) {
+        return Promise.resolve(Response.json({ event: event({ pubkey: NIP98_TEST_PUBKEY }) }))
+      }
+      return Promise.resolve(Response.json({ error: 'not found' }, { status: 404 }))
+    })
+    const body = JSON.stringify({ platforms: ['tiktok'] })
+    const signed = await signNip98Event({
+      url: `http://localhost/videos/${VIDEO_EVENT_ID}/crossposts`,
+      method: 'POST',
+      createdAt: Math.floor(Date.now() / 1000),
+      body,
+    })
+
+    const res = await app.request(
+      `/videos/${VIDEO_EVENT_ID}/crossposts`,
+      { method: 'POST', headers: { authorization: nip98Header(signed), 'content-type': 'application/json' }, body },
+      testEnv(db, queueSend),
+    )
+
+    expect(res.status).toBe(200)
+    await expect(res.json()).resolves.toEqual({
+      jobs: [expect.objectContaining({ platform: 'tiktok', videoEventId: VIDEO_EVENT_ID, status: 'queued' })],
+    })
+    expect(fetchMock.mock.calls.map(([url]) => url)).not.toContain('https://login.divine.video/api/nostr')
   })
 
   it('lists video jobs for the authenticated user', async () => {
