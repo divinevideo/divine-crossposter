@@ -3,7 +3,8 @@ import { getConnectionById, upsertConnection } from '../db/connections'
 import { applyMigrations, connection, PUBKEY_B } from '../db/test-helpers'
 import type { ConnectionRecord, Env } from '../types'
 import { decryptToken, encryptToken } from '../utils/crypto'
-import { refreshPolicy, runTokenRefreshSweep, shouldRefreshToken } from './token-refresh'
+import { getEnabledAdapters } from '../platforms/registry'
+import { refreshConnectionToken, refreshPolicy, runTokenRefreshSweep, shouldRefreshToken } from './token-refresh'
 
 const KEY = '0123456789abcdef0123456789abcdef'
 const DAY = 24 * 60 * 60
@@ -216,6 +217,47 @@ describe('runTokenRefreshSweep', () => {
     const after = await getConnectionById(db, 'conn_ig')
     expect(after?.status).toBe('connected')
     await expect(decryptToken(after!.encryptedAccessToken, KEY)).resolves.toBe('ig-reconnected-token')
+  })
+
+  it('keeps a rotated X token when a concurrent refresh was rejected first', async () => {
+    const snapshot = await seedX(db)
+    const adapter = getEnabledAdapters(env(db)).find((candidate) => candidate.platform === 'x')!
+    // The provider rotated the refresh token for the winner and rejects the
+    // loser's reuse; the loser's rejection reaches D1 before the winner's write.
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ error: 'invalid_grant' }, { status: 400 }))
+      .mockResolvedValueOnce(
+        Response.json({ access_token: 'x-new-access', refresh_token: 'x-new-refresh', expires_in: 7_200 }),
+      )
+
+    await expect(refreshConnectionToken(env(db), adapter, snapshot, NOW)).resolves.toMatchObject({
+      status: 'needs_reauth',
+    })
+    await expect(refreshConnectionToken(env(db), adapter, snapshot, NOW)).resolves.toMatchObject({
+      status: 'refreshed',
+      accessToken: 'x-new-access',
+    })
+    const after = await getConnectionById(db, 'conn_x')
+    expect(after?.status).toBe('connected')
+    await expect(decryptToken(after!.encryptedRefreshToken!, KEY)).resolves.toBe('x-new-refresh')
+  })
+
+  it('does not overwrite tokens a concurrent refresh stored first', async () => {
+    await seedX(db)
+    fetchMock.mockImplementationOnce(async () => {
+      const current = await getConnectionById(db, 'conn_x')
+      await upsertConnection(db, {
+        ...current!,
+        encryptedAccessToken: await encryptToken('x-other-access', KEY),
+        encryptedRefreshToken: await encryptToken('x-other-refresh', KEY),
+      })
+      return Response.json({ access_token: 'x-new-access', refresh_token: 'x-new-refresh', expires_in: 7_200 })
+    })
+
+    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toMatchObject({ refreshed: 1 })
+    const after = await getConnectionById(db, 'conn_x')
+    await expect(decryptToken(after!.encryptedAccessToken, KEY)).resolves.toBe('x-other-access')
+    await expect(decryptToken(after!.encryptedRefreshToken!, KEY)).resolves.toBe('x-other-refresh')
   })
 
   it('leaves connections of disabled platforms alone', async () => {

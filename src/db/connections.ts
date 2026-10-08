@@ -273,6 +273,10 @@ export async function listConnectionsDueForRefresh(
  * Stores refreshed tokens only if the connection still holds the access token
  * the refresh started from, so a concurrent refresh or reconnect is never
  * overwritten. Returns false when another writer got there first.
+ *
+ * A concurrent refresh rejected by the provider may already have flagged the
+ * same token needs_reauth; these tokens were just issued, so they win and the
+ * connection is restored. A disconnect is never undone.
  */
 export async function storeRefreshedTokens(
   db: D1Database,
@@ -296,8 +300,9 @@ export async function storeRefreshedTokens(
       granted_scopes = ?,
       metadata_json = ?,
       last_refresh_at = ?,
-      updated_at = ?
-    WHERE id = ? AND encrypted_access_token = ? AND status = 'connected'`,
+      updated_at = ?,
+      status = 'connected'
+    WHERE id = ? AND encrypted_access_token = ? AND status IN ('connected', 'needs_reauth')`,
     input.encryptedAccessToken,
     input.encryptedRefreshToken,
     input.tokenExpiresAt,

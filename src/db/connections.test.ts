@@ -5,6 +5,7 @@ import {
   getConnection,
   listConnections,
   markConnectionNeedsReauth,
+  markConnectionNeedsReauthIfTokenUnchanged,
   upsertConnection,
 } from './connections'
 import { applyMigrations, connection, PUBKEY_A, PUBKEY_B } from './test-helpers'
@@ -54,5 +55,14 @@ describe('connection repository', () => {
       status: 'disconnected',
       updatedAt: 3_000,
     })
+  })
+
+  it('flags needs_reauth only while the connection still holds the rejected token', async () => {
+    await upsertConnection(db, connection({ id: 'conn_tiktok', encryptedAccessToken: 'current' }))
+
+    await expect(markConnectionNeedsReauthIfTokenUnchanged(db, 'conn_tiktok', 'replaced', 2_000)).resolves.toBe(false)
+    await expect(getConnection(db, 'conn_tiktok', PUBKEY_A)).resolves.toMatchObject({ status: 'connected' })
+    await expect(markConnectionNeedsReauthIfTokenUnchanged(db, 'conn_tiktok', 'current', 2_000)).resolves.toBe(true)
+    await expect(getConnection(db, 'conn_tiktok', PUBKEY_A)).resolves.toMatchObject({ status: 'needs_reauth' })
   })
 })
