@@ -117,7 +117,7 @@ describe('runTokenRefreshSweep', () => {
     const before = await seedInstagram(db)
     fetchMock.mockResolvedValueOnce(Response.json({ access_token: 'ig-new-token', expires_in: 60 * DAY }))
 
-    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toEqual({ refreshed: 1, needsReauth: 0, failed: 0 })
+    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toEqual({ refreshed: 1, superseded: 0, needsReauth: 0, failed: 0 })
 
     const url = new URL(String(fetchMock.mock.calls[0][0]))
     expect(url.pathname).toBe('/refresh_access_token')
@@ -141,7 +141,7 @@ describe('runTokenRefreshSweep', () => {
     })
     await seedX(db, { tokenExpiresAt: NOW + 60 * 60 })
 
-    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toEqual({ refreshed: 0, needsReauth: 0, failed: 0 })
+    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toEqual({ refreshed: 0, superseded: 0, needsReauth: 0, failed: 0 })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -157,14 +157,14 @@ describe('runTokenRefreshSweep', () => {
     await seedInstagram(db, { tokenExpiresAt: NOW - 19 * DAY })
     fetchMock.mockResolvedValueOnce(deadInstagramToken())
 
-    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toEqual({ refreshed: 0, needsReauth: 1, failed: 0 })
+    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toEqual({ refreshed: 0, superseded: 0, needsReauth: 1, failed: 0 })
     await expect(getConnectionById(db, 'conn_ig')).resolves.toMatchObject({ status: 'needs_reauth', updatedAt: NOW })
   })
 
   it('never sweeps X, even with an expired access token', async () => {
     await seedX(db, { tokenExpiresAt: NOW - 3_600 })
 
-    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toEqual({ refreshed: 0, needsReauth: 0, failed: 0 })
+    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toEqual({ refreshed: 0, superseded: 0, needsReauth: 0, failed: 0 })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -239,7 +239,12 @@ describe('runTokenRefreshSweep', () => {
       return deadInstagramToken()
     })
 
-    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toMatchObject({ refreshed: 1, needsReauth: 0 })
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toEqual({ refreshed: 0, superseded: 1, needsReauth: 0, failed: 0 })
+    expect(log).toHaveBeenCalledWith(
+      JSON.stringify({ event: 'token_refresh_sweep', refreshed: 0, superseded: 1, needsReauth: 0, failed: 0 }),
+    )
     const after = await getConnectionById(db, 'conn_ig')
     expect(after?.status).toBe('connected')
     await expect(decryptToken(after!.encryptedAccessToken, KEY)).resolves.toBe('ig-reconnected-token')

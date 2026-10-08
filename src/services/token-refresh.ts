@@ -155,6 +155,8 @@ export async function refreshConnectionToken(
 
 export type TokenRefreshSweepResult = {
   refreshed: number
+  /** A reconnect or concurrent refresh replaced the token first. */
+  superseded: number
   needsReauth: number
   failed: number
 }
@@ -171,7 +173,7 @@ export async function runTokenRefreshSweep(
   now: number,
   batchSize = TOKEN_REFRESH_BATCH_SIZE,
 ): Promise<TokenRefreshSweepResult> {
-  const result: TokenRefreshSweepResult = { refreshed: 0, needsReauth: 0, failed: 0 }
+  const result: TokenRefreshSweepResult = { refreshed: 0, superseded: 0, needsReauth: 0, failed: 0 }
   let remaining = batchSize
 
   for (const adapter of getEnabledAdapters(env)) {
@@ -194,7 +196,7 @@ export async function runTokenRefreshSweep(
           result.needsReauth += 1
           console.warn(`token refresh rejected; connection ${connection.id} (${connection.platform}) needs reauth`)
         } else {
-          result.refreshed += 1
+          result[outcome.status] += 1
         }
       } catch (error) {
         result.failed += 1
@@ -204,5 +206,8 @@ export async function runTokenRefreshSweep(
     }
   }
 
+  if (result.refreshed + result.superseded + result.needsReauth + result.failed > 0) {
+    console.log(JSON.stringify({ event: 'token_refresh_sweep', ...result }))
+  }
   return result
 }
