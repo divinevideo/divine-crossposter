@@ -781,6 +781,110 @@ describe('publisher service', () => {
     expect(updated?.metadataJson).toContain('expires_in')
   })
 
+  describe('Instagram token lifecycle', () => {
+    const DAY = 24 * 60 * 60
+    const NOW = 100 * DAY
+
+    async function seedInstagram(tokenExpiresAt: number) {
+      const token = await encryptToken('ig-old-token', KEY)
+      await upsertConnection(
+        db,
+        connection({
+          id: 'conn_1',
+          platform: 'instagram',
+          externalAccountId: 'external-account-1',
+          encryptedAccessToken: token,
+          encryptedRefreshToken: token,
+          createdAt: NOW - 55 * DAY,
+          updatedAt: NOW - 55 * DAY,
+          lastRefreshAt: null,
+          tokenExpiresAt,
+        }),
+      )
+      await createOrGetJob(db, job({ id: 'job_1', platform: 'instagram', expiresAt: NOW + DAY }))
+    }
+
+    function publishResponses() {
+      fetchMock
+        .mockResolvedValueOnce(Response.json({ id: 'container-id' }))
+        .mockResolvedValueOnce(Response.json({ status_code: 'FINISHED' }))
+        .mockResolvedValueOnce(Response.json({ id: 'ig-post-id' }))
+        .mockResolvedValueOnce(Response.json({ permalink: 'https://instagram.example/reel' }))
+    }
+
+    const deadToken = () =>
+      Response.json(
+        { error: { message: 'Error validating access token', type: 'OAuthException', code: 190 } },
+        { status: 400 },
+      )
+
+    it('refreshes a token expiring within a week before publishing with it', async () => {
+      await seedInstagram(NOW + 3 * DAY)
+      fetchMock.mockResolvedValueOnce(Response.json({ access_token: 'ig-new-token', expires_in: 60 * DAY }))
+      publishResponses()
+
+      await expect(processCrosspostJob(platformEnv(db, 'instagram'), 'job_1', { now: NOW })).resolves.toEqual({
+        status: 'posted',
+      })
+
+      expect(new URL(String(fetchMock.mock.calls[0][0])).pathname).toBe('/refresh_access_token')
+      const createBody = fetchMock.mock.calls[1][1]?.body as URLSearchParams
+      expect(createBody.get('access_token')).toBe('ig-new-token')
+      await expect(getConnection(db, 'conn_1', PUBKEY_A)).resolves.toMatchObject({
+        status: 'connected',
+        lastRefreshAt: NOW,
+      })
+    })
+
+    it('still publishes with the current token when an early refresh fails transiently', async () => {
+      await seedInstagram(NOW + 3 * DAY)
+      fetchMock.mockResolvedValueOnce(Response.json({ error: { message: 'unavailable' } }, { status: 500 }))
+      publishResponses()
+
+      await expect(processCrosspostJob(platformEnv(db, 'instagram'), 'job_1', { now: NOW })).resolves.toEqual({
+        status: 'posted',
+      })
+      const createBody = fetchMock.mock.calls[1][1]?.body as URLSearchParams
+      expect(createBody.get('access_token')).toBe('ig-old-token')
+    })
+
+    it('flags the job and connection needs_reauth when an expired token cannot be refreshed', async () => {
+      await seedInstagram(NOW - DAY)
+      fetchMock.mockResolvedValueOnce(deadToken())
+
+      await expect(processCrosspostJob(platformEnv(db, 'instagram'), 'job_1', { now: NOW })).resolves.toEqual({
+        status: 'needs_reauth',
+      })
+
+      expect(fetchMock).toHaveBeenCalledOnce()
+      await expect(getJob(db, 'job_1', PUBKEY_A)).resolves.toMatchObject({
+        status: 'needs_reauth',
+        errorCode: 'needs_reauth',
+      })
+      await expect(getConnection(db, 'conn_1', PUBKEY_A)).resolves.toMatchObject({ status: 'needs_reauth' })
+      await expect(listAttempts(db, 'job_1')).resolves.toEqual([
+        expect.objectContaining({ status: 'needs_reauth', errorCode: 'needs_reauth', providerStatus: 400 }),
+      ])
+    })
+
+    it('flags needs_reauth instead of retrying when publishing is rejected with code 190', async () => {
+      await seedInstagram(NOW + 30 * DAY)
+      fetchMock.mockResolvedValueOnce(deadToken())
+
+      await expect(processCrosspostJob(platformEnv(db, 'instagram'), 'job_1', { now: NOW })).resolves.toEqual({
+        status: 'needs_reauth',
+      })
+
+      await expect(getJob(db, 'job_1', PUBKEY_A)).resolves.toMatchObject({
+        status: 'needs_reauth',
+        errorCode: 'needs_reauth',
+        retryCount: 0,
+        nextRetryAt: null,
+      })
+      await expect(getConnection(db, 'conn_1', PUBKEY_A)).resolves.toMatchObject({ status: 'needs_reauth' })
+    })
+  })
+
   it('marks revoked tokens as needs_reauth on the job and connection', async () => {
     await seedConnectedJob(db, 'tiktok')
     fetchMock.mockResolvedValueOnce(Response.json({ error: { code: 'access_token_invalid' } }))

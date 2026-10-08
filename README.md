@@ -21,7 +21,7 @@ Crossposter is a single Worker with four entry points wired together in `src/ind
 - **HTTP API and UI** — Hono routes for the setup UI, health, provider readiness, OAuth connections, preferences, crosspost creation, and job reads.
 - **Platform adapters** — one adapter per platform (`src/platforms/instagram.ts`, `tiktok.ts`, `x.ts`, `youtube.ts`) behind a shared adapter interface and a registry that reports which providers are configured.
 - **Queue consumer** — consumes `{ "jobId": "..." }` messages from `CROSSPOST_QUEUE`, refreshes tokens when needed, calls the platform adapter, records an attempt, and updates job state. Controlled application retries are fresh delayed messages; the current delivery is acknowledged only after that send succeeds.
-- **Scheduled reconciler and watchdog** — a Cron Trigger backs up automatic mode, recovers stale claims, re-enqueues due D1 jobs, and checks both the primary queue and dead-letter queue (DLQ). Divine web/mobile should still push a newly published event after a successful publish.
+- **Scheduled reconciler, watchdog, and token refresh** — a Cron Trigger backs up automatic mode, recovers stale claims, re-enqueues due D1 jobs, checks both the primary queue and dead-letter queue (DLQ), and refreshes provider tokens before they expire (see [Token lifecycle](#token-lifecycle)). Divine web/mobile should still push a newly published event after a successful publish.
 
 D1 is the source of truth for connection state, preferences, idempotent job creation, retry state, and an append-only attempt history. The Worker does not transcode video; if a platform needs media normalization later, that belongs in a separate service.
 
@@ -205,6 +205,20 @@ Normalized error codes: `rate_limited`, `needs_reauth`, `media_rejected`, `platf
 - Scheduled reconciliation recovers a stale X `uploading` claim only while the job is unexpired and the incremented retry count remains within the retry budget. An expired claim becomes `skipped`; a claim that exhausts the retry budget remains terminal `failed` with no `nextRetryAt`. A stale X `dispatching` claim has an unknown external outcome, so it becomes terminal `ambiguous_post_result` and requires manual reconciliation; it is never automatically reposted.
 - If token refresh or publishing returns an auth failure, the connection and job are marked `needs_reauth`; automatic jobs for that platform stop until the user reconnects. Manual retry after reconnect reuses the existing job where possible and preserves attempt history.
 - Disconnecting relies on local D1 state to stop future Divine-initiated crossposts. Provider revocation, where supported, is called best-effort; a failed revocation does not keep local crossposting enabled.
+
+## Token lifecycle
+
+Provider tokens are refreshed before they expire, not after, because some cannot be refreshed once dead. The policy lives in `src/services/token-refresh.ts`.
+
+| Platform | Token | Refreshed when |
+| --- | --- | --- |
+| Instagram | Long-lived token, 60 days, refreshed with itself (`ig_refresh_token`). Meta only refreshes it while it is still valid and at least 24 hours old; an expired one needs a reconnect. | It expires within 7 days and was issued at least 24 hours ago. |
+| X, TikTok, YouTube | Short-lived access token plus a separate refresh token (X rotates its refresh token on every use). | It expires within 10 minutes. |
+
+- **Scheduled sweep.** Every cron tick refreshes connected tokens that are inside their platform's window, soonest expiry first, at most 25 per tick. One connection's failure never stops the others; a transient failure is retried on a later tick.
+- **At publish time.** The queue consumer applies the same policy before publishing. If an early refresh fails transiently while the stored token still works, the publish goes ahead with the stored token.
+- **Dead credentials.** A provider answer that means the user's credential is dead — HTTP 401/403, a Meta `OAuthException` with code 190 or 102 (Meta sends these with HTTP 400), or an OAuth `invalid_grant`/`invalid_token` — maps to `needs_reauth`. The connection is flagged `needs_reauth`, `GET /connections` reports it, and the app prompts the user to reconnect instead of every crosspost failing as `unknown_platform_error`.
+- **Concurrency.** Refreshed tokens are stored only if the connection still holds the token the refresh started from, and a rejected refresh does not flag a connection whose token was replaced in the meantime by a reconnect or another refresh.
 
 ## Queue operations and alerts
 

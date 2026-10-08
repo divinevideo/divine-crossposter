@@ -1,5 +1,5 @@
 import { listAttempts, recordAttempt } from '../db/attempts'
-import { getConnection, markConnectionNeedsReauth, upsertConnection } from '../db/connections'
+import { getConnection, markConnectionNeedsReauth } from '../db/connections'
 import {
   claimJobForPublish,
   claimJobForStatusPoll,
@@ -12,8 +12,8 @@ import {
 import { getAdapter } from '../platforms/registry'
 import { PlatformAdapterError, asRecord } from '../platforms/adapter'
 import type { Env, ErrorCode, JobAttemptRecord, JobRecord, JobStatus, Platform } from '../types'
-import { decryptToken, encryptToken, generateRandomId } from '../utils/crypto'
-import { sanitizeProviderMetadata } from '../utils/provider-metadata'
+import { decryptToken, generateRandomId } from '../utils/crypto'
+import { refreshConnectionToken, shouldRefreshToken, TOKEN_FORCE_REFRESH_SECONDS } from './token-refresh'
 
 const BACKOFF_SECONDS = [60, 300, 900, 1800, 3600] as const
 
@@ -144,54 +144,40 @@ async function accessTokenForJob(
     return null
   }
 
-  if (!connection.tokenExpiresAt || connection.tokenExpiresAt > now + 60 || !connection.encryptedRefreshToken) {
+  if (!shouldRefreshToken(connection, now)) {
     return decryptToken(connection.encryptedAccessToken, env.TOKEN_ENCRYPTION_KEY)
   }
 
+  let outcome
   try {
-    const refreshed = await adapter.refreshToken({
-      refreshToken: await decryptToken(connection.encryptedRefreshToken, env.TOKEN_ENCRYPTION_KEY),
-    })
-    const encryptedAccessToken = await encryptToken(refreshed.accessToken, env.TOKEN_ENCRYPTION_KEY)
-    const encryptedRefreshToken = refreshed.refreshToken
-      ? await encryptToken(refreshed.refreshToken, env.TOKEN_ENCRYPTION_KEY)
-      : connection.encryptedRefreshToken
-    await upsertConnection(env.DB, {
-      ...connection,
-      encryptedAccessToken,
-      encryptedRefreshToken,
-      tokenExpiresAt: refreshed.expiresAt ?? connection.tokenExpiresAt,
-      grantedScopes: refreshed.scopes.length ? refreshed.scopes.join(' ') : connection.grantedScopes,
-      lastRefreshAt: now,
-      updatedAt: now,
-      metadataJson: safeJson({
-        ...asRecord(JSON.parse(connection.metadataJson || '{}')),
-        token: sanitizeProviderMetadata(refreshed.metadata),
-      }),
-    })
-    return refreshed.accessToken
+    outcome = await refreshConnectionToken(env, adapter, connection, now)
   } catch (error) {
-    if (error instanceof PlatformAdapterError && error.code === 'needs_reauth') {
-      await updateOwnedJob(env, job.id, ownership, {
-        status: 'needs_reauth',
-        updatedAt: now,
-        errorCode: 'needs_reauth',
-        errorMessage: error.message,
-      })
-      await markConnectionNeedsReauth(env.DB, connection.id, now)
-      await addAttempt(env, {
-        jobId: job.id,
-        platform: job.platform,
-        status: 'needs_reauth',
-        errorCode: 'needs_reauth',
-        errorMessage: error.message,
-        providerStatus: error.providerStatus ?? null,
-        now,
-      })
-      return null
+    // A refresh taken early (Instagram refreshes a week ahead) must not fail a
+    // publish while the stored token still works; the cron sweep retries it.
+    if (connection.tokenExpiresAt && connection.tokenExpiresAt > now + TOKEN_FORCE_REFRESH_SECONDS) {
+      return decryptToken(connection.encryptedAccessToken, env.TOKEN_ENCRYPTION_KEY)
     }
     throw error
   }
+
+  if (outcome.status !== 'needs_reauth') return outcome.accessToken
+
+  await updateOwnedJob(env, job.id, ownership, {
+    status: 'needs_reauth',
+    updatedAt: now,
+    errorCode: 'needs_reauth',
+    errorMessage: outcome.error.message,
+  })
+  await addAttempt(env, {
+    jobId: job.id,
+    platform: job.platform,
+    status: 'needs_reauth',
+    errorCode: 'needs_reauth',
+    errorMessage: outcome.error.message,
+    providerStatus: outcome.error.providerStatus ?? null,
+    now,
+  })
+  return null
 }
 
 function latestProviderResponse(platform: Platform, attempts: JobAttemptRecord[]): Record<string, unknown> {

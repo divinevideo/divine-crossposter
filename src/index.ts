@@ -8,6 +8,7 @@ import { webhooks } from './routes/webhooks'
 import { processCrosspostJob, PublisherRetryError } from './services/publisher'
 import { runAutoCrosspostReconciliation } from './services/reconciler'
 import { runOperationalChecks } from './services/operations'
+import { runTokenRefreshSweep } from './services/token-refresh'
 import type { Env } from './types'
 
 const app = new Hono<{ Bindings: Env }>()
@@ -52,9 +53,14 @@ export default {
     } catch (error) {
       failures.push(error)
     }
+    try {
+      await runTokenRefreshSweep(env, Math.floor(Date.now() / 1_000))
+    } catch (error) {
+      failures.push(error)
+    }
     if (failures.length === 1) throw failures[0]
     if (failures.length > 1) {
-      throw new AggregateError(failures, 'scheduled reconciliation and operational checks failed')
+      throw new AggregateError(failures, 'scheduled reconciliation, operational checks, or token refresh failed')
     }
   },
 }

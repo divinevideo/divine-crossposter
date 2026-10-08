@@ -138,11 +138,36 @@ export async function readProviderResponse(response: Response): Promise<unknown>
   }
 }
 
+// Meta Graph error codes meaning the access token is expired, revoked, or
+// otherwise unusable (190 "Invalid OAuth access token", 102 "API session").
+// Meta returns these with HTTP 400, so the status alone never reveals them.
+const META_DEAD_TOKEN_CODES = new Set([102, 190])
+
+// RFC 6749 token-endpoint errors meaning the refresh token or grant is dead
+// (X, YouTube and TikTok return these with HTTP 400 on refresh).
+const OAUTH_DEAD_GRANT_ERRORS = new Set(['invalid_grant', 'invalid_token'])
+
+/**
+ * True when a provider error body says the user's credential is dead and only
+ * reconnecting can fix it, whatever HTTP status carried it.
+ */
+export function isDeadCredential(providerResponse: unknown): boolean {
+  const body = asRecord(providerResponse)
+  if (typeof body.error === 'string' && OAUTH_DEAD_GRANT_ERRORS.has(body.error)) return true
+
+  const metaError = asRecord(body.error)
+  const metaCode = Number(metaError.code ?? body.code)
+  if (Number.isInteger(metaCode) && META_DEAD_TOKEN_CODES.has(metaCode)) {
+    return metaError.type === undefined || metaError.type === 'OAuthException' || body.error_type === 'OAuthException'
+  }
+  return false
+}
+
 export async function normalizeProviderError(platform: Platform, response: Response): Promise<PlatformAdapterError> {
   const providerResponse = await readProviderResponse(response)
   let code: ErrorCode = 'unknown_platform_error'
 
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401 || response.status === 403 || isDeadCredential(providerResponse)) {
     code = 'needs_reauth'
   } else if (response.status === 429) {
     code = 'rate_limited'
