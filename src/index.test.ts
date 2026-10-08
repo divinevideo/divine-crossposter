@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import worker, { app } from './index'
-import { upsertConnection } from './db/connections'
+import { getConnectionById, upsertConnection } from './db/connections'
 import { createOrGetJob, getJob } from './db/jobs'
 import { requestOperationsAlertTest } from './db/operations'
 import { applyMigrations, connection, job } from './db/test-helpers'
 import type { Env } from './types'
+import { encryptToken } from './utils/crypto'
 
 function env(overrides: Partial<Env> = {}): Env {
   return {
@@ -271,6 +272,42 @@ describe('scheduled handler', () => {
       retryCount: 1,
       nextRetryAt: expect.any(Number),
     })
+  })
+
+  it('refreshes an Instagram token nearing expiry on the scheduled tick', async () => {
+    const db = await applyMigrations()
+    const now = Math.floor(Date.now() / 1_000)
+    const token = await encryptToken('ig-old-token', '0123456789abcdef0123456789abcdef')
+    await upsertConnection(
+      db,
+      connection({
+        id: 'conn_ig',
+        platform: 'instagram',
+        encryptedAccessToken: token,
+        encryptedRefreshToken: token,
+        createdAt: now - 50 * 86_400,
+        tokenExpiresAt: now + 2 * 86_400,
+      }),
+    )
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ access_token: 'ig-new-token', expires_in: 5_184_000 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await worker.scheduled(
+      {} as ScheduledEvent,
+      env({
+        DB: db,
+        CROSSPOST_QUEUE: { send: vi.fn() } as unknown as Queue<{ jobId: string }>,
+        ENABLE_INSTAGRAM: 'true',
+        INSTAGRAM_CLIENT_ID: 'instagram-client',
+        INSTAGRAM_CLIENT_SECRET: 'instagram-secret',
+      }),
+      {} as ExecutionContext,
+    )
+
+    expect(new URL(String(fetchMock.mock.calls[0][0])).pathname).toBe('/refresh_access_token')
+    const refreshed = await getConnectionById(db, 'conn_ig')
+    expect(refreshed?.lastRefreshAt).toEqual(expect.any(Number))
+    expect(refreshed?.tokenExpiresAt).toBeGreaterThan(now + 50 * 86_400)
   })
 
   it('surfaces both reconciliation and watchdog failures', async () => {

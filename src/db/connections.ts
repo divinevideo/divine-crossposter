@@ -37,7 +37,7 @@ function mapConnection(row: ConnectionRow): ConnectionRecord {
   }
 }
 
-async function getById(db: D1Database, id: string): Promise<ConnectionRecord | null> {
+export async function getConnectionById(db: D1Database, id: string): Promise<ConnectionRecord | null> {
   const row = await firstPrepared<ConnectionRow>(db, 'SELECT * FROM connections WHERE id = ?', id)
   return row ? mapConnection(row) : null
 }
@@ -228,5 +228,111 @@ export async function disconnectConnection(
     id,
     pubkey,
   )
-  return changes(result) > 0 && (await getById(db, id)) !== null
+  return changes(result) > 0 && (await getConnectionById(db, id)) !== null
+}
+
+/**
+ * Connections whose stored token is close enough to expiry to refresh.
+ *
+ * A token is due when it expires before `refreshBefore` and was issued (last
+ * refreshed, or created) before `issuedBefore`. A token expiring before
+ * `forceBefore` is due regardless of age, so a nearly dead token is always
+ * tried once more. Soonest expiry first.
+ */
+export async function listConnectionsDueForRefresh(
+  db: D1Database,
+  input: {
+    platform: Platform
+    refreshBefore: number
+    issuedBefore: number
+    forceBefore: number
+    limit: number
+  },
+): Promise<ConnectionRecord[]> {
+  const rows = await allPrepared<ConnectionRow>(
+    db,
+    `SELECT * FROM connections
+    WHERE platform = ?
+      AND status = 'connected'
+      AND encrypted_refresh_token IS NOT NULL
+      AND token_expires_at IS NOT NULL
+      AND token_expires_at <= ?
+      AND (COALESCE(last_refresh_at, created_at) <= ? OR token_expires_at <= ?)
+    ORDER BY token_expires_at ASC, id ASC
+    LIMIT ?`,
+    input.platform,
+    input.refreshBefore,
+    input.issuedBefore,
+    input.forceBefore,
+    input.limit,
+  )
+  return rows.map(mapConnection)
+}
+
+/**
+ * Stores refreshed tokens only if the connection still holds the access token
+ * the refresh started from, so a concurrent refresh or reconnect is never
+ * overwritten. Returns false when another writer got there first.
+ *
+ * A concurrent refresh rejected by the provider may already have flagged the
+ * same token needs_reauth; these tokens were just issued, so they win and the
+ * connection is restored. A disconnect is never undone.
+ */
+export async function storeRefreshedTokens(
+  db: D1Database,
+  input: {
+    id: string
+    expectedEncryptedAccessToken: string
+    encryptedAccessToken: string
+    encryptedRefreshToken: string | null
+    tokenExpiresAt: number | null
+    grantedScopes: string
+    metadataJson: string
+    now: number
+  },
+): Promise<boolean> {
+  const result = await runPrepared(
+    db,
+    `UPDATE connections SET
+      encrypted_access_token = ?,
+      encrypted_refresh_token = ?,
+      token_expires_at = ?,
+      granted_scopes = ?,
+      metadata_json = ?,
+      last_refresh_at = ?,
+      updated_at = ?,
+      status = 'connected'
+    WHERE id = ? AND encrypted_access_token = ? AND status IN ('connected', 'needs_reauth')`,
+    input.encryptedAccessToken,
+    input.encryptedRefreshToken,
+    input.tokenExpiresAt,
+    input.grantedScopes,
+    input.metadataJson,
+    input.now,
+    input.now,
+    input.id,
+    input.expectedEncryptedAccessToken,
+  )
+  return changes(result) > 0
+}
+
+/**
+ * Marks a connection needs_reauth only if it still holds the token that the
+ * provider rejected; a reconnect or concurrent refresh in between wins.
+ */
+export async function markConnectionNeedsReauthIfTokenUnchanged(
+  db: D1Database,
+  id: string,
+  expectedEncryptedAccessToken: string,
+  now: number,
+): Promise<boolean> {
+  const result = await runPrepared(
+    db,
+    `UPDATE connections SET status = 'needs_reauth', updated_at = ?
+    WHERE id = ? AND encrypted_access_token = ? AND status = 'connected'`,
+    now,
+    id,
+    expectedEncryptedAccessToken,
+  )
+  return changes(result) > 0
 }
