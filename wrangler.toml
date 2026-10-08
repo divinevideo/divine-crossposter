@@ -10,10 +10,11 @@ KEYCAST_URL = "https://login.divine.video"
 FUNNELCAKE_URL = "https://api.divine.video"
 OAUTH_REDIRECT_BASE = "https://crossposter.divine.video"
 ENABLE_INSTAGRAM = "true"
-# Instagram App ID used for Instagram business login. 1337820474523664 is the
-# app the last successful connect (2026-07-22) used; every connect with
-# 1495112838545237 failed Meta's token exchange.
-INSTAGRAM_CLIENT_ID = "1337820474523664"
+# Instagram App ID for "Instagram API with Instagram Login" (the Instagram
+# product's own app, distinct from the Facebook App ID). Verified against the
+# token endpoint: 1495112838545237 is accepted, while 1337820474523664 returns
+# "Invalid platform app" exactly like a bogus id, so it is not an Instagram app.
+INSTAGRAM_CLIENT_ID = "1495112838545237"
 ENABLE_TIKTOK = "false"
 ENABLE_X = "true"
 ENABLE_YOUTUBE = "false"
