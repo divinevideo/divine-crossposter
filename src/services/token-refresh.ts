@@ -127,6 +127,12 @@ export async function refreshConnectionToken(
     return { status: 'needs_reauth', error }
   }
 
+  if (!refreshed.accessToken) {
+    // Never overwrite a token that still works with an empty one; treat it as
+    // a transient provider failure so the stored token stays in use.
+    throw new PlatformAdapterError(adapter.platform, 'unknown_platform_error', 'provider returned no access token')
+  }
+
   const stored = await storeRefreshedTokens(env.DB, {
     id: connection.id,
     expectedEncryptedAccessToken: connection.encryptedAccessToken,

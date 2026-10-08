@@ -206,6 +206,16 @@ describe('runTokenRefreshSweep', () => {
     await expect(getConnectionById(db, 'conn_ig_2')).resolves.toMatchObject({ status: 'connected', lastRefreshAt: NOW })
   })
 
+  it('keeps the working token when a refresh succeeds without an access token', async () => {
+    await seedInstagram(db)
+    fetchMock.mockResolvedValueOnce(Response.json({ expires_in: 60 * DAY }))
+
+    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toMatchObject({ refreshed: 0, failed: 1 })
+    const after = await getConnectionById(db, 'conn_ig')
+    expect(after).toMatchObject({ status: 'connected', lastRefreshAt: null, tokenExpiresAt: NOW + 5 * DAY })
+    await expect(decryptToken(after!.encryptedAccessToken, KEY)).resolves.toBe('ig-old-token')
+  })
+
   it('refreshes at most the batch size per run, soonest expiry first', async () => {
     await seedInstagram(db, { id: 'conn_later', tokenExpiresAt: NOW + 4 * DAY })
     await seedInstagram(db, { id: 'conn_sooner', pubkey: PUBKEY_B, tokenExpiresAt: NOW + 2 * DAY })
