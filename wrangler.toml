@@ -10,9 +10,10 @@ KEYCAST_URL = "https://login.divine.video"
 FUNNELCAKE_URL = "https://api.divine.video"
 OAUTH_REDIRECT_BASE = "https://crossposter.divine.video"
 ENABLE_INSTAGRAM = "true"
-# Instagram App ID from the Instagram business login product ("divine-IG"),
-# not the Facebook App ID — see docs/instagram-setup.md.
-INSTAGRAM_CLIENT_ID = "1495112838545237"
+# Instagram App ID used for Instagram business login. 1337820474523664 is the
+# app the last successful connect (2026-07-22) used; every connect with
+# 1495112838545237 failed Meta's token exchange.
+INSTAGRAM_CLIENT_ID = "1337820474523664"
 ENABLE_TIKTOK = "false"
 ENABLE_X = "true"
 ENABLE_YOUTUBE = "false"
