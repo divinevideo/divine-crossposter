@@ -147,6 +147,11 @@ const META_DEAD_TOKEN_CODES = new Set([102, 190])
 // (X, YouTube and TikTok return these with HTTP 400 on refresh).
 const OAUTH_DEAD_GRANT_ERRORS = new Set(['invalid_grant', 'invalid_token'])
 
+// RFC 6749 errors about the app's own client credentials. A client that
+// authenticates with HTTP Basic (as X does) gets these with HTTP 401, which
+// must not flag every user's connection for reconnect.
+const OAUTH_CLIENT_ERRORS = new Set(['invalid_client', 'unauthorized_client'])
+
 /**
  * True when a provider error body says the user's credential is dead and only
  * reconnecting can fix it, whatever HTTP status carried it.
@@ -167,7 +172,8 @@ export async function normalizeProviderError(platform: Platform, response: Respo
   const providerResponse = await readProviderResponse(response)
   let code: ErrorCode = 'unknown_platform_error'
 
-  if (response.status === 401 || response.status === 403 || isDeadCredential(providerResponse)) {
+  const clientError = OAUTH_CLIENT_ERRORS.has(String(asRecord(providerResponse).error))
+  if (!clientError && (response.status === 401 || response.status === 403 || isDeadCredential(providerResponse))) {
     code = 'needs_reauth'
   } else if (response.status === 429) {
     code = 'rate_limited'

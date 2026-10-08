@@ -70,4 +70,10 @@ describe('platform adapter errors', () => {
       normalizeProviderError('x', Response.json({ error: 'invalid_client' }, { status: 400 })),
     ).resolves.toMatchObject({ code: 'unknown_platform_error', providerStatus: 400 })
   })
+
+  it('does not treat invalid_client on HTTP 401 as a user reauth', async () => {
+    await expect(
+      normalizeProviderError('x', Response.json({ error: 'invalid_client' }, { status: 401 })),
+    ).resolves.toMatchObject({ code: 'unknown_platform_error', providerStatus: 401 })
+  })
 })
