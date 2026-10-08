@@ -112,7 +112,18 @@ export async function refreshConnectionToken(
     if (!(error instanceof PlatformAdapterError) || error.code !== 'needs_reauth') throw error
     const newer = await currentAccessToken(env, connection)
     if (newer) return { status: 'superseded', accessToken: newer }
-    await markConnectionNeedsReauthIfTokenUnchanged(env.DB, connection.id, connection.encryptedAccessToken, now)
+    const marked = await markConnectionNeedsReauthIfTokenUnchanged(
+      env.DB,
+      connection.id,
+      connection.encryptedAccessToken,
+      now,
+    )
+    if (!marked) {
+      // The token changed between the re-read and the mark: a reconnect or a
+      // concurrent refresh won, so the connection is healthy.
+      const replaced = await currentAccessToken(env, connection)
+      if (replaced) return { status: 'superseded', accessToken: replaced }
+    }
     return { status: 'needs_reauth', error }
   }
 

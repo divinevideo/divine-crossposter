@@ -278,6 +278,49 @@ describe('runTokenRefreshSweep', () => {
     await expect(decryptToken(after!.encryptedRefreshToken!, KEY)).resolves.toBe('x-other-refresh')
   })
 
+  it('returns the replacement token when a reconnect lands between the re-read and the needs_reauth mark', async () => {
+    const snapshot = await seedInstagram(db, { tokenExpiresAt: NOW - DAY })
+    fetchMock.mockResolvedValueOnce(deadInstagramToken())
+    // Lands the reconnect just before the conditional needs_reauth update runs.
+    const racingDb = new Proxy(db, {
+      get(target, property, receiver) {
+        if (property !== 'prepare') return Reflect.get(target, property, receiver)
+        return (query: string) => {
+          const statement = target.prepare(query)
+          if (!query.includes("SET status = 'needs_reauth'")) return statement
+          return new Proxy(statement, {
+            get(statementTarget, statementProperty, statementReceiver) {
+              if (statementProperty !== 'bind') return Reflect.get(statementTarget, statementProperty, statementReceiver)
+              return (...bindings: unknown[]) => {
+                const bound = statementTarget.bind(...bindings)
+                return new Proxy(bound, {
+                  get(boundTarget, boundProperty, boundReceiver) {
+                    if (boundProperty !== 'run') return Reflect.get(boundTarget, boundProperty, boundReceiver)
+                    return async () => {
+                      await upsertConnection(db, {
+                        ...snapshot,
+                        encryptedAccessToken: await encryptToken('ig-reconnected-token', KEY),
+                        tokenExpiresAt: NOW + 60 * DAY,
+                      })
+                      return boundTarget.run()
+                    }
+                  },
+                })
+              }
+            },
+          })
+        }
+      },
+    }) as D1Database
+    const instagram = getEnabledAdapters(env(db)).find((candidate) => candidate.platform === 'instagram')!
+
+    await expect(refreshConnectionToken(env(racingDb), instagram, snapshot, NOW)).resolves.toEqual({
+      status: 'superseded',
+      accessToken: 'ig-reconnected-token',
+    })
+    await expect(getConnectionById(db, 'conn_ig')).resolves.toMatchObject({ status: 'connected' })
+  })
+
   it('leaves connections of disabled platforms alone', async () => {
     await seedInstagram(db)
     const disabled = { ...env(db), ENABLE_INSTAGRAM: 'false' }
