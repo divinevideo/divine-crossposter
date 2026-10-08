@@ -65,6 +65,10 @@ async function seedX(db: D1Database, overrides: Partial<ConnectionRecord> = {}):
   )
 }
 
+function xAdapter(db: D1Database) {
+  return getEnabledAdapters(env(db)).find((candidate) => candidate.platform === 'x')!
+}
+
 const deadInstagramToken = () =>
   Response.json(
     { error: { message: 'Error validating access token: Session has expired', type: 'OAuthException', code: 190 } },
@@ -84,11 +88,12 @@ describe('token refresh policy', () => {
     expect(shouldRefreshToken(young, NOW)).toBe(true)
   })
 
-  it('refreshes short-lived X tokens only shortly before expiry', () => {
-    expect(refreshPolicy('x').windowSeconds).toBeLessThan(DAY)
+  it('refreshes short-lived X tokens only at the last minute, never proactively', () => {
+    expect(refreshPolicy('x').proactive).toBe(false)
+    expect(refreshPolicy('instagram').proactive).toBe(true)
     const base = connection({ platform: 'x', createdAt: NOW - 3_600 })
-    expect(shouldRefreshToken({ ...base, tokenExpiresAt: NOW + 5 * 60 }, NOW)).toBe(true)
-    expect(shouldRefreshToken({ ...base, tokenExpiresAt: NOW + 60 * 60 }, NOW)).toBe(false)
+    expect(shouldRefreshToken({ ...base, tokenExpiresAt: NOW + 30 }, NOW)).toBe(true)
+    expect(shouldRefreshToken({ ...base, tokenExpiresAt: NOW + 5 * 60 }, NOW)).toBe(false)
   })
 
   it('never refreshes a connection without a refresh token or expiry', () => {
@@ -156,13 +161,22 @@ describe('runTokenRefreshSweep', () => {
     await expect(getConnectionById(db, 'conn_ig')).resolves.toMatchObject({ status: 'needs_reauth', updatedAt: NOW })
   })
 
-  it('refreshes an X token near expiry, rotating the refresh token', async () => {
-    await seedX(db)
+  it('never sweeps X, even with an expired access token', async () => {
+    await seedX(db, { tokenExpiresAt: NOW - 3_600 })
+
+    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toEqual({ refreshed: 0, needsReauth: 0, failed: 0 })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('refreshes an X token, rotating the refresh token', async () => {
+    const snapshot = await seedX(db)
     fetchMock.mockResolvedValueOnce(
       Response.json({ access_token: 'x-new-access', refresh_token: 'x-new-refresh', expires_in: 7_200 }),
     )
 
-    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toMatchObject({ refreshed: 1 })
+    await expect(refreshConnectionToken(env(db), xAdapter(db), snapshot, NOW)).resolves.toMatchObject({
+      status: 'refreshed',
+    })
     const body = fetchMock.mock.calls[0][1]?.body as URLSearchParams
     expect(body.get('refresh_token')).toBe('x-old-refresh')
     const after = await getConnectionById(db, 'conn_x')
@@ -171,23 +185,25 @@ describe('runTokenRefreshSweep', () => {
   })
 
   it('marks an X connection needs_reauth when its refresh token is rejected with invalid_grant', async () => {
-    await seedX(db)
+    const snapshot = await seedX(db)
     fetchMock.mockResolvedValueOnce(Response.json({ error: 'invalid_grant' }, { status: 400 }))
 
-    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toMatchObject({ needsReauth: 1 })
+    await expect(refreshConnectionToken(env(db), xAdapter(db), snapshot, NOW)).resolves.toMatchObject({
+      status: 'needs_reauth',
+    })
     await expect(getConnectionById(db, 'conn_x')).resolves.toMatchObject({ status: 'needs_reauth' })
   })
 
   it('isolates a transient failure on one connection from the others', async () => {
     await seedInstagram(db, { tokenExpiresAt: NOW + 1 * DAY })
-    await seedX(db)
+    await seedInstagram(db, { id: 'conn_ig_2', pubkey: PUBKEY_B, tokenExpiresAt: NOW + 2 * DAY })
     fetchMock
       .mockResolvedValueOnce(Response.json({ error: { message: 'temporarily unavailable' } }, { status: 500 }))
-      .mockResolvedValueOnce(Response.json({ access_token: 'x-new-access', refresh_token: 'x-new-refresh', expires_in: 7_200 }))
+      .mockResolvedValueOnce(Response.json({ access_token: 'ig-new-token', expires_in: 60 * DAY }))
 
-    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toEqual({ refreshed: 1, needsReauth: 0, failed: 1 })
+    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toMatchObject({ refreshed: 1, needsReauth: 0, failed: 1 })
     await expect(getConnectionById(db, 'conn_ig')).resolves.toMatchObject({ status: 'connected', lastRefreshAt: null })
-    await expect(getConnectionById(db, 'conn_x')).resolves.toMatchObject({ status: 'connected', lastRefreshAt: NOW })
+    await expect(getConnectionById(db, 'conn_ig_2')).resolves.toMatchObject({ status: 'connected', lastRefreshAt: NOW })
   })
 
   it('refreshes at most the batch size per run, soonest expiry first', async () => {
@@ -221,7 +237,7 @@ describe('runTokenRefreshSweep', () => {
 
   it('keeps a rotated X token when a concurrent refresh was rejected first', async () => {
     const snapshot = await seedX(db)
-    const adapter = getEnabledAdapters(env(db)).find((candidate) => candidate.platform === 'x')!
+    const adapter = xAdapter(db)
     // The provider rotated the refresh token for the winner and rejects the
     // loser's reuse; the loser's rejection reaches D1 before the winner's write.
     fetchMock
@@ -243,7 +259,7 @@ describe('runTokenRefreshSweep', () => {
   })
 
   it('does not overwrite tokens a concurrent refresh stored first', async () => {
-    await seedX(db)
+    const snapshot = await seedX(db)
     fetchMock.mockImplementationOnce(async () => {
       const current = await getConnectionById(db, 'conn_x')
       await upsertConnection(db, {
@@ -254,7 +270,9 @@ describe('runTokenRefreshSweep', () => {
       return Response.json({ access_token: 'x-new-access', refresh_token: 'x-new-refresh', expires_in: 7_200 })
     })
 
-    await expect(runTokenRefreshSweep(env(db), NOW)).resolves.toMatchObject({ refreshed: 1 })
+    await expect(refreshConnectionToken(env(db), xAdapter(db), snapshot, NOW)).resolves.toMatchObject({
+      status: 'superseded',
+    })
     const after = await getConnectionById(db, 'conn_x')
     await expect(decryptToken(after!.encryptedAccessToken, KEY)).resolves.toBe('x-other-access')
     await expect(decryptToken(after!.encryptedRefreshToken!, KEY)).resolves.toBe('x-other-refresh')

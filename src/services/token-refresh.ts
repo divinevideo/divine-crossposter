@@ -24,23 +24,27 @@ export type RefreshPolicy = {
   windowSeconds: number
   /** Do not refresh a token issued less than this many seconds ago. */
   minAgeSeconds: number
+  /** Whether the scheduled sweep refreshes this platform ahead of use. */
+  proactive: boolean
 }
 
 /**
  * Instagram long-lived tokens last 60 days and can only be refreshed while
  * still valid and at least 24 hours old; once expired the user must reconnect.
- * Refreshing a week ahead leaves many daily cron chances to land one.
+ * The scheduled sweep refreshes them a week ahead, leaving many chances to
+ * land one even for a creator who has stopped posting.
  *
  * The other providers issue short-lived access tokens (X: 2 hours) with a
- * separate refresh token, so they refresh shortly before expiry. Refreshing
- * them days early would mean refreshing on every publish and, for X's
- * single-use refresh tokens, racing concurrent publishes for no benefit.
+ * separate refresh token that stays usable, so they refresh only at publish
+ * time, just before expiry. Sweeping them would refresh every idle connection
+ * every couple of hours, race publishes for X's single-use refresh tokens, and
+ * retry every minute forever on an error that is not a clear dead credential.
  */
 export function refreshPolicy(platform: Platform): RefreshPolicy {
   if (platform === 'instagram') {
-    return { windowSeconds: 7 * DAY_SECONDS, minAgeSeconds: DAY_SECONDS }
+    return { windowSeconds: 7 * DAY_SECONDS, minAgeSeconds: DAY_SECONDS, proactive: true }
   }
-  return { windowSeconds: 10 * 60, minAgeSeconds: 0 }
+  return { windowSeconds: TOKEN_FORCE_REFRESH_SECONDS, minAgeSeconds: 0, proactive: false }
 }
 
 export function shouldRefreshToken(connection: ConnectionRecord, now: number): boolean {
@@ -139,8 +143,9 @@ export type TokenRefreshSweepResult = {
 }
 
 /**
- * Scheduled sweep: refreshes connected tokens that are inside their platform's
- * refresh window, at most `batchSize` per run. One connection's failure never
+ * Scheduled sweep: refreshes connected tokens of proactive platforms (today
+ * only Instagram) that are inside their refresh window, at most `batchSize`
+ * per run. One connection's failure never
  * stops the others; dead tokens are flagged needs_reauth so the app prompts
  * the user to reconnect instead of silently failing every crosspost.
  */
@@ -155,6 +160,7 @@ export async function runTokenRefreshSweep(
   for (const adapter of getEnabledAdapters(env)) {
     if (remaining <= 0) break
     const policy = refreshPolicy(adapter.platform)
+    if (!policy.proactive) continue
     const due = await listConnectionsDueForRefresh(env.DB, {
       platform: adapter.platform,
       refreshBefore: now + policy.windowSeconds,

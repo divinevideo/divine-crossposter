@@ -212,13 +212,13 @@ Provider tokens are refreshed before they expire, not after, because some cannot
 
 | Platform | Token | Refreshed when |
 | --- | --- | --- |
-| Instagram | Long-lived token, 60 days, refreshed with itself (`ig_refresh_token`). Meta only refreshes it while it is still valid and at least 24 hours old; an expired one needs a reconnect. | It expires within 7 days and was issued at least 24 hours ago. |
-| X, TikTok, YouTube | Short-lived access token plus a separate refresh token (X rotates its refresh token on every use). | It expires within 10 minutes. |
+| Instagram | Long-lived token, 60 days, refreshed with itself (`ig_refresh_token`). Meta only refreshes it while it is still valid and at least 24 hours old; an expired one needs a reconnect. | By the scheduled sweep and at publish time, once it expires within 7 days and was issued at least 24 hours ago. |
+| X, TikTok, YouTube | Short-lived access token plus a separate refresh token that stays usable after the access token expires (X rotates its refresh token on every use). | Only at publish time, once it expires within 60 seconds. |
 
-- **Scheduled sweep.** Every cron tick refreshes connected tokens that are inside their platform's window, soonest expiry first, at most 25 per tick. One connection's failure never stops the others; a transient failure is retried on a later tick.
-- **At publish time.** The queue consumer applies the same policy before publishing. If an early refresh fails transiently while the stored token still works, the publish goes ahead with the stored token.
-- **Dead credentials.** A provider answer that means the user's credential is dead — HTTP 401/403, a Meta `OAuthException` with code 190 or 102 (Meta sends these with HTTP 400), or an OAuth `invalid_grant`/`invalid_token` — maps to `needs_reauth`. The connection is flagged `needs_reauth`, `GET /connections` reports it, and the app prompts the user to reconnect instead of every crosspost failing as `unknown_platform_error`.
-- **Concurrency.** Refreshed tokens are stored only if the connection still holds the token the refresh started from, and a rejected refresh does not flag a connection whose token was replaced in the meantime by a reconnect or another refresh.
+- **Scheduled sweep.** Every cron tick refreshes connected Instagram tokens that are inside the window, soonest expiry first, at most 25 per tick. The short-lived providers are left out on purpose: sweeping them would refresh every idle connection every couple of hours, race publishes for X's single-use refresh tokens, and retry every minute on errors that are not clearly a dead credential. One connection's failure never stops the others; a transient failure is retried on a later tick.
+- **At publish time.** The queue consumer applies the same per-platform policy before publishing. If an early refresh fails transiently while the stored token still works, the publish goes ahead with the stored token.
+- **Dead credentials.** A provider answer that means the user's credential is dead — HTTP 401/403, a Meta `OAuthException` with code 190 or 102 (Meta sends these with HTTP 400), or an OAuth `invalid_grant`/`invalid_token` — maps to `needs_reauth`. An OAuth `invalid_client`/`unauthorized_client` is the app's own credentials failing, not the user's, so it never does, even on HTTP 401. The connection is flagged `needs_reauth`, `GET /connections` reports it, and the app prompts the user to reconnect instead of every crosspost failing as `unknown_platform_error`.
+- **Concurrency.** Refreshed tokens are stored only if the connection still holds the token the refresh started from, and a rejected refresh does not flag a connection whose token was replaced in the meantime by a reconnect or another refresh. When two refreshes race and the loser flags the connection before the winner writes, the winner's freshly issued tokens restore it to `connected`; a disconnect is never undone.
 
 ## Queue operations and alerts
 
