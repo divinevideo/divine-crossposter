@@ -43,92 +43,15 @@ jobs:
       - name: Test
         run: npm run test:once
 
-  deploy:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: test
+  deployment-owner:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    environment: production
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Apply D1 migrations
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: npx wrangler d1 migrations apply divine-crossposter --remote
-
-      - name: Deploy Worker
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: npm run deploy
-
-      - name: Smoke test production
-        run: |
-          set -euo pipefail
-
-          check() {
-            url="$1"
-            pattern="$2"
-            for attempt in $(seq 1 12); do
-              body="$(curl --fail --silent --show-error \
-                --connect-timeout 5 --max-time 20 \
-                --retry 2 --retry-all-errors \
-                "$url" || true)"
-              if printf '%s' "$body" | grep -Fq "$pattern"; then
-                return 0
-              fi
-              echo "Attempt $attempt failed for $url"
-              sleep 10
-            done
-
-            echo "Timed out waiting for $url to contain expected content" >&2
-            exit 1
-          }
-
-          check_platform_enabled() {
-            url="$1"
-            platform="$2"
-            for attempt in $(seq 1 12); do
-              body="$(curl --fail --silent --show-error \
-                --connect-timeout 5 --max-time 20 \
-                --retry 2 --retry-all-errors \
-                "$url" || true)"
-              if printf '%s' "$body" | jq -e \
-                --arg platform "$platform" \
-                '.platforms | any(.[]; .platform == $platform and .enabled == true)' \
-                >/dev/null 2>&1; then
-                return 0
-              fi
-              echo "Attempt $attempt failed for platform $platform"
-              sleep 10
-            done
-
-            echo "Timed out waiting for platform $platform to be enabled" >&2
-            exit 1
-          }
-
-          check "https://crossposter.divine.video/health" '"ok":true'
-          check "https://crossposter.divine.video/" 'Login with Divine'
-          check "https://crossposter.divine.video/platforms" 'Provider status'
-          check_platform_enabled "https://crossposter.divine.video/platforms?format=json" instagram
-          check_platform_enabled "https://crossposter.divine.video/platforms?format=json" x
+      - name: Production belongs to Divine Connections
+        run: echo "This repository is retired. Production releases must come from divinevideo/divine-connections."
 
   notify:
-    if: ${{ always() && (inputs.test_failure_notification == true || needs.test.result == 'failure' || needs.deploy.result == 'failure') }}
-    needs: [test, deploy]
+    if: ${{ always() && (inputs.test_failure_notification == true || needs.test.result == 'failure') }}
+    needs: [test]
     runs-on: ubuntu-latest
     timeout-minutes: 5
 

@@ -1,3 +1,5 @@
+> Production deployment is retired in this repository. The Worker and shared database are owned by [Divine Connections](https://github.com/divinevideo/divine-connections). Make releases there; this checkout is historical.
+
 # Divine Crossposter
 
 Cloudflare Worker for opt-in crossposting of original Divine videos to external short-form platforms. A creator connects a platform account, chooses manual or automatic posting, and Crossposter publishes their Divine videos there on their behalf. Nothing posts until the creator opts in.
