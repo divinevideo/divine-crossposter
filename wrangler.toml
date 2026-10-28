@@ -1,44 +1,36 @@
-name = "divine-crossposter"
+# Local development and tests only. Production configuration lives in divine-connections.
+name = "divine-crossposter-local"
+workers_dev = false
 main = "src/index.ts"
 compatibility_date = "2025-09-06"
-routes = [
-  { pattern = "crossposter.divine.video", custom_domain = true }
-]
 
 [vars]
 KEYCAST_URL = "https://login.divine.video"
 FUNNELCAKE_URL = "https://api.divine.video"
-OAUTH_REDIRECT_BASE = "https://crossposter.divine.video"
-ENABLE_INSTAGRAM = "true"
-# Instagram App ID for "Instagram API with Instagram Login" (the Instagram
-# product's own app, distinct from the Facebook App ID). Verified against the
-# token endpoint: 1495112838545237 is accepted, while 1337820474523664 returns
-# "Invalid platform app" exactly like a bogus id, so it is not an Instagram app.
-INSTAGRAM_CLIENT_ID = "1495112838545237"
+OAUTH_REDIRECT_BASE = "http://localhost:8787"
+ENABLE_INSTAGRAM = "false"
+INSTAGRAM_CLIENT_ID = "local-test-only"
 ENABLE_TIKTOK = "false"
-ENABLE_X = "true"
+ENABLE_X = "false"
 ENABLE_YOUTUBE = "false"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "divine-crossposter"
-database_id = "8e84ca74-0dab-40cc-a8d7-b5cf03f32287"
+database_name = "divine-crossposter-local"
+database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "migrations"
 
 [[queues.producers]]
 binding = "CROSSPOST_QUEUE"
-queue = "divine-crossposter-jobs"
+queue = "divine-crossposter-local-jobs"
 
 [[queues.producers]]
 binding = "CROSSPOST_DLQ"
-queue = "divine-crossposter-jobs-dlq"
+queue = "divine-crossposter-local-jobs-dlq"
 
 [[queues.consumers]]
-queue = "divine-crossposter-jobs"
+queue = "divine-crossposter-local-jobs"
 max_batch_size = 10
 max_batch_timeout = 30
 max_retries = 5
-dead_letter_queue = "divine-crossposter-jobs-dlq"
-
-[triggers]
-crons = ["* * * * *"]
+dead_letter_queue = "divine-crossposter-local-jobs-dlq"

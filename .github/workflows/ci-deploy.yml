@@ -1,4 +1,4 @@
-name: CI and Deploy
+name: CI
 
 on:
   pull_request:
@@ -6,12 +6,6 @@ on:
     branches:
       - main
   workflow_dispatch:
-    inputs:
-      test_failure_notification:
-        description: Send a safe notification test
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -42,45 +36,3 @@ jobs:
 
       - name: Test
         run: npm run test:once
-
-  deployment-owner:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Production belongs to Divine Connections
-        run: echo "This repository is retired. Production releases must come from divinevideo/divine-connections."
-
-  notify:
-    if: ${{ always() && (inputs.test_failure_notification == true || needs.test.result == 'failure') }}
-    needs: [test]
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - name: Notify workflow failure
-        env:
-          OPS_ALERT_WEBHOOK_URL: ${{ secrets.OPS_ALERT_WEBHOOK_URL }}
-          NOTIFICATION_TEST: ${{ inputs.test_failure_notification }}
-          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          if [ -z "${OPS_ALERT_WEBHOOK_URL:-}" ]; then
-            echo "::error::OPS_ALERT_WEBHOOK_URL is missing or inaccessible to this workflow"
-            exit 1
-          fi
-
-          event=workflow_failed
-          if [ "$NOTIFICATION_TEST" = true ]; then
-            event=notification_test
-          fi
-
-          payload="$(jq -cn \
-            --arg service divine-crossposter \
-            --arg event "$event" \
-            --arg run_url "$RUN_URL" \
-            '{service: $service, event: $event, runUrl: $run_url}')"
-          curl --fail --silent --show-error \
-            --connect-timeout 5 --max-time 30 \
-            --retry 3 --retry-all-errors \
-            --header 'content-type: application/json' \
-            --data-binary "$payload" \
-            "$OPS_ALERT_WEBHOOK_URL"
