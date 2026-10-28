@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "dev:scheduled": "wrangler dev --test-scheduled",
-    "deploy": "node -e \"console.error('Deployment retired: use divinevideo/divine-connections'); process.exit(1)\"",
+    "deploy": "node -e \"console.error('Deployment retired: use divinevideo/divine-connections'); process.exit(1)\" --",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:once": "vitest run"
