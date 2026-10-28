@@ -38,14 +38,9 @@ In [developers.facebook.com](https://developers.facebook.com) for the Crossposte
 Creator-side requirement: the Instagram account must be a professional account
 (Business or Creator). Personal accounts cannot use the content publishing API.
 
-## Worker configuration
+## Worker configuration (retired here)
 
-```bash
-# wrangler.toml — set INSTAGRAM_CLIENT_ID to the *Instagram App ID* from step 2
-# then store the Instagram App Secret:
-npx wrangler secret put INSTAGRAM_CLIENT_SECRET
-npx wrangler deploy
-```
+This document describes the historical adapter. Do not update production secrets or deploy from this checkout. Use [Divine Connections](https://github.com/divinevideo/divine-connections) for the current provider setup and release procedure. See the [deployment transition](../README.md#deployment-transition) for the pending production cutover and retirement gates. For local tests only, use test credentials in a gitignored `.dev.vars` file.
 
 ## Token lifecycle
 
